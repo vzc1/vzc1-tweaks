@@ -36,4 +36,4 @@ Grab **FPSBoost.exe** from the [Releases](../../releases) page and run it. It as
 - The biggest FPS gains are in Fortnite's own settings: **Performance** rendering mode, **NVIDIA Reflex On + Boost**, Fullscreen, and V-Sync off.
 
 ## Building the exe yourself
-GitHub Actions builds `FPSBoost.exe` on every push using [ps2exe](https://github.com/MScholtes/PS2EXE). Push a tag like `v1.0.0` to publish a release.
+GitHub Actions builds `FPSBoost.exe` with [ps2exe](https://github.com/MScholtes/PS2EXE) and publishes a new release every time something is pushed to `main`.
