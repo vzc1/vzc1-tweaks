@@ -108,6 +108,17 @@ function Set-DxGlobal($Key, $Val) {
     Set-Reg $GPU_PREFS 'DirectXUserGlobalSettings' (($parts -join ';') + ';') 'String'
 }
 
+# Registry keys for the physical network cards (where Device Manager keeps their power setting)
+function Get-NicClassKeys {
+    $class = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}'
+    $guids = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | ForEach-Object { "$($_.InterfaceGuid)".ToLower() })
+    if (-not $guids.Count) { return @() }
+    Get-ChildItem $class -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^\d{4}$' } | ForEach-Object {
+        $id = Get-Reg $_.PSPath 'NetCfgInstanceId'
+        if ($id -and ($guids -contains "$id".ToLower())) { $_.PSPath }
+    }
+}
+
 # ---------- Tweaks ----------
 $Tweaks = @(
     [pscustomobject]@{
@@ -191,15 +202,19 @@ $Tweaks = @(
         Off  = { Remove-Reg $GPU_PREFS $FN_PATH }
     }
     [pscustomobject]@{
-        Id = 'nicpower'; Group = 'Network'
+        Id = 'nicpower'; Group = 'Network'; Reboot = $true
         Name = 'Network card power saving off'
-        Desc = 'Stops Windows putting your Wi-Fi or Ethernet card to sleep, which causes lag spikes.'
+        Desc = 'Stops Windows putting your Wi-Fi or Ethernet card to sleep, which causes lag spikes. Same as unticking "Allow the computer to turn off this device" in Device Manager. Needs a restart.'
         Get  = {
-            $pm = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Get-NetAdapterPowerManagement -ErrorAction SilentlyContinue
-            $pm -and -not ($pm | Where-Object { $_.AllowComputerToTurnOffDevice -eq 'Enabled' })
+            $keys = @(Get-NicClassKeys)
+            $keys.Count -gt 0 -and -not ($keys | Where-Object { (Get-Reg $_ 'PnPCapabilities') -ne 24 })
         }
-        On   = { Get-NetAdapter -Physical | ForEach-Object { Set-NetAdapterPowerManagement -Name $_.Name -AllowComputerToTurnOffDevice Disabled -ErrorAction SilentlyContinue } }
-        Off  = { Get-NetAdapter -Physical | ForEach-Object { Set-NetAdapterPowerManagement -Name $_.Name -AllowComputerToTurnOffDevice Enabled -ErrorAction SilentlyContinue } }
+        On   = {
+            $keys = @(Get-NicClassKeys)
+            if (-not $keys.Count) { throw 'No network card found.' }
+            foreach ($k in $keys) { Set-Reg $k 'PnPCapabilities' 24 }
+        }
+        Off  = { foreach ($k in @(Get-NicClassKeys)) { Remove-Reg $k 'PnPCapabilities' } }
     }
     [pscustomobject]@{
         Id = 'dosvc'; Group = 'Network'
