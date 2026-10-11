@@ -1,0 +1,42 @@
+name: Build EXE
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ps2exe
+        shell: powershell
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module ps2exe -Scope CurrentUser -Force
+
+      - name: Build FPSBoost.exe
+        shell: powershell
+        run: |
+          Invoke-ps2exe -inputFile FPSBoost.ps1 -outputFile FPSBoost.exe `
+            -noConsole -requireAdmin -STA `
+            -title 'FPS Boost' -product 'FPS Boost' -description 'Windows tweaks for Fortnite that actually do something' `
+            -version '1.0.0.0'
+          if (-not (Test-Path FPSBoost.exe)) { throw 'Build failed' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FPSBoost
+          path: FPSBoost.exe
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: FPSBoost.exe
