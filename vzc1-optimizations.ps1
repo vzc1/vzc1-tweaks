@@ -8,7 +8,7 @@ if (-not $isAdmin) {
     exit
 }
 
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Drawing
 Add-Type -Namespace Vz -Name Native -MemberDefinition @'
 [DllImport("user32.dll", SetLastError = true)]
 public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, int[] pvParam, uint fWinIni);
@@ -319,7 +319,7 @@ $STARTUP_SOURCES = @(
 
 function Get-ExeFromCommand($cmd) {
     if (-not $cmd) { return $null }
-    $cmdText = [Environment]::ExpandEnvironmentVariables($cmdTextmd.Trim())
+    $cmdText = [Environment]::ExpandEnvironmentVariables($cmd.Trim())
     if ($cmdText.StartsWith('"')) { $e = $cmdText.IndexOf('"', 1); if ($e -gt 1) { return $cmdText.Substring(1, $e - 1) } }
     $i = $cmdText.ToLower().IndexOf('.exe')
     if ($i -gt 0) { return $cmdText.Substring(0, $i + 4) }
@@ -388,8 +388,14 @@ function Get-HeavyApps {
             $mem = ($_.Group | Measure-Object WorkingSet64 -Sum).Sum
             $first = $_.Group[0]
             $label = $_.Name
-            try { if ($first.MainModule.FileVersionInfo.FileDescription) { $label = $first.MainModule.FileVersionInfo.FileDescription.Trim() } } catch { }
-            [pscustomobject]@{ Process = $_.Name; Label = $label; Count = $_.Count; Bytes = $mem }
+            $path = $null
+            try {
+                $path = $first.MainModule.FileName
+                $descr = "$($first.MainModule.FileVersionInfo.FileDescription)".Trim()
+                if ($descr) { $label = $descr }
+            } catch { }
+            if (-not $label) { $label = $_.Name }
+            [pscustomobject]@{ Process = $_.Name; Label = $label; Path = $path; Count = $_.Count; Bytes = $mem }
         } |
         Where-Object { $_.Bytes -gt 100MB } |
         Sort-Object Bytes -Descending |
@@ -2011,7 +2017,7 @@ function Build-apps {
         $close = New-Button 'Close' {
             param($s, $e)
             $proc = $s.Tag.Process; $label = $s.Tag.Label
-            $r = [Windows.MessageBox]::Show("Close $label? Anything unsaved in it will be lost.", $APP_NAME, 'YesNo', 'Question')
+            $r = [Windows.MessageBox]::Show("Close $($label)? Anything unsaved in it will be lost.", $APP_NAME, 'YesNo', 'Question')
             if ($r -ne 'Yes') { return }
             $ps = @(Get-Process -Name $proc -ErrorAction SilentlyContinue)
             foreach ($p in $ps) { try { [void]$p.CloseMainWindow() } catch { } }
@@ -2022,8 +2028,19 @@ function Build-apps {
         }
         $close.Tag = @{ Process = $a.Process; Label = $a.Label }
         [void]$right.Children.Add($close)
-        $sub = if ($a.Count -gt 1) { "$($a.Count) processes" } else { '' }
-        Add-PanelItem $panel (New-Row $label $sub $right)
+        $icon = $null
+        if ($a.Path) {
+            try {
+                $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($a.Path)
+                $icon = New-Object Windows.Controls.Image
+                $icon.Source = [Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [Windows.Int32Rect]::Empty, [Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
+                $icon.Width = 22; $icon.Height = 22
+                $ico.Dispose()
+            } catch { $icon = $null }
+        }
+        if (-not $icon) { $icon = New-Dot $C.Dim }
+        $sub = if ($a.Count -gt 1) { "$($a.Count) processes, $($a.Process).exe" } else { "$($a.Process).exe" }
+        Add-PanelItem $panel (New-Row $a.Label $sub $right $icon)
     }
     [void]$body.Children.Add($panel)
 }
