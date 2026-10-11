@@ -1,43 +1,42 @@
 # vzc1's optimizations
 
-Windows tweaks for Fortnite that **actually do something**, in a clean app where every tweak is one switch. Flip it on to apply it, flip it off to undo it.
+A Windows app for getting more FPS and less lag in Fortnite. Every change can be switched back off from inside the app.
 
 ## Download
 
-Grab **vzc1-optimizations.exe** from the [Releases](../../releases) page and run it. It asks for admin because most of these are system settings.
+Get **vzc1-optimizations.exe** from the [latest release](../../releases/latest) and run it. It asks for admin because most of these are system settings.
 
-> Windows SmartScreen may say "Windows protected your PC" because the exe isn't code-signed. Click **More info** then **Run anyway**. Or grab `vzc1-optimizations-script.zip` instead and double-click `Run-vzc1-optimizations.bat`: it's the same app as a readable script.
+If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**. That screen appears for any new app that isn't code-signed. You can also download `vzc1-optimizations-script.zip` instead and double-click `Run-vzc1-optimizations.bat`. It's the same app as a script you can read.
 
-## What's in it
+## What it does
 
-**FPS + smoothness**
-- Max performance power plan: fewer random FPS dips
-- Kill Xbox background recording (Game DVR)
-- Make sure Game Mode is on
-- Hardware GPU scheduling (needs a restart)
-- Optimizations for windowed games (Windows 11)
-- Turn off mouse acceleration
-- High CPU priority for Fortnite
-- Force Fortnite onto your dedicated GPU (big on gaming laptops)
+**Home** checks your PC before you play:
+- Monitor stuck at 60 Hz when it supports more. Switches it with one click.
+- Laptop running on battery
+- Power plan not on max performance
+- Fortnite settings that cost you FPS or add delay
+- Wi-Fi instead of a cable
+- Background apps using a lot of memory
 
-**Network + input delay**
-- Stop network adapter power saving (random lag spikes)
-- Stop Windows uploading updates to other PCs (ping spikes)
-- Remove network throttling
-- Kill the Sticky Keys popup
+**Tweaks**
+- Max performance power plan, Game DVR off, Game Mode, hardware GPU scheduling, windowed game optimizations
+- High CPU priority for Fortnite, run Fortnite on the dedicated GPU
+- Network card power saving off, update sharing off, network throttling off
+- Mouse acceleration off, Sticky Keys shortcut off
 
-**Server Ping**
-- Live ping to **every Fortnite datacenter**, not just the region: NA East (Virginia, Ohio), NA Central (Dallas), NA West (Oregon, San Jose), Europe (Frankfurt, London, Paris), Brazil (Sao Paulo), Oceania (Sydney), Asia (Tokyo), Middle East (Bahrain)
-- Uses Epic's own matchmaking ping servers, then maps every server IP to its real city using Amazon's published IP ranges. New datacenters show up automatically
-- Shows ping, jitter, packet loss and a live graph for each datacenter, plus the best server and which Matchmaking Region to pick
+**Fortnite settings** edits Fortnite's own settings file: Performance mode, DirectX 11 or 12, frame rate limit, window mode, NVIDIA Reflex, V-Sync, motion blur, shadows, grass, Nanite, ray tracing and the FPS counter. Your original file is backed up the first time, with a one-click restore.
 
-**Tools**
-- **Make restore point** before changing anything
-- **Clean temp files** (leaves your shader cache alone so you don't get stutters)
+**Server ping** shows live ping, jitter and packet loss to every Fortnite datacenter: Virginia, Ohio, Dallas, Oregon, San Jose, Frankfurt, London, Paris, Sao Paulo, Sydney, Tokyo and Bahrain. It uses Epic's own matchmaking ping servers and tells you which Matchmaking Region to pick.
+
+**Startup apps** turns off apps that open with Windows, the same way Task Manager does.
+
+**Background apps** lists what's using your memory right now and closes it with one click.
+
+**Tools**: restore point, undo all tweaks, temp file cleanup, bufferbloat test.
 
 ## Honest notes
-- No app can lower your *base* ping. That comes down to how far you are from the server. These tweaks fix lag spikes and jitter. An Ethernet cable is the biggest fix there is.
-- The biggest FPS gains are in Fortnite's own settings: **Performance** rendering mode, **NVIDIA Reflex On + Boost**, Fullscreen, and V-Sync off.
+- No app can lower your base ping. That depends on how far you are from the server. What you can fix is lag spikes, and an Ethernet cable fixes most of them.
+- The biggest FPS gain on low and mid-range PCs is Fortnite's Performance rendering mode. The Fortnite settings page sets it for you.
 
-## Building the exe yourself
-GitHub Actions compiles a small C# launcher (`build/Launcher.cs`) that runs `vzc1-optimizations.ps1` inside the exe. Nothing gets dropped to disk or downloaded. It publishes a new release every time something is pushed to `main`.
+## How the exe is built
+GitHub Actions compiles a small C# launcher (`build/Launcher.cs`) that runs `vzc1-optimizations.ps1` inside the exe. Nothing is dropped to disk or downloaded. A new release is published on every push to `main`.

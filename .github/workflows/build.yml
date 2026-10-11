@@ -19,7 +19,7 @@ jobs:
         run: |
           $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
           $sma = [System.Management.Automation.PSObject].Assembly.Location
-          $ver = "2.0.${{ github.run_number }}.0"
+          $ver = "3.0.${{ github.run_number }}.0"
           (Get-Content build\Launcher.cs -Raw) -replace '\[assembly: AssemblyCompany', "[assembly: AssemblyVersion(`"$ver`")]`n[assembly: AssemblyFileVersion(`"$ver`")]`n[assembly: AssemblyCompany" | Set-Content build\Launcher.gen.cs
           & $csc /nologo /target:winexe /optimize+ /platform:anycpu `
             /out:vzc1-optimizations.exe `
@@ -44,8 +44,8 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.0.${{ github.run_number }}
-          name: vzc1's optimizations v2.0.${{ github.run_number }}
+          tag_name: v3.0.${{ github.run_number }}
+          name: vzc1's optimizations v3.0.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |

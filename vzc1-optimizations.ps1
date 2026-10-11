@@ -1,7 +1,7 @@
-# vzc1's optimizations - Fortnite tweaks that actually do something.
-# Every switch applies a real Windows setting and can be flipped back to undo it.
+# vzc1's optimizations
+# Windows + Fortnite tweaks. Every change can be switched back off from the app.
 
-# ---------- Run as admin (needed for system-wide settings) ----------
+# ---------- Run as admin ----------
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$PSCommandPath`""
@@ -9,9 +9,51 @@ if (-not $isAdmin) {
 }
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
-Add-Type -Namespace Win -Name Mouse -MemberDefinition @'
+Add-Type -Namespace Vz -Name Native -MemberDefinition @'
 [DllImport("user32.dll", SetLastError = true)]
 public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, int[] pvParam, uint fWinIni);
+
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+public struct DEVMODE {
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+    public short dmSpecVersion; public short dmDriverVersion; public short dmSize; public short dmDriverExtra;
+    public int dmFields; public int dmPositionX; public int dmPositionY;
+    public int dmDisplayOrientation; public int dmDisplayFixedOutput;
+    public short dmColor; public short dmDuplex; public short dmYResolution; public short dmTTOption; public short dmCollate;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+    public short dmLogPixels; public int dmBitsPerPel; public int dmPelsWidth; public int dmPelsHeight;
+    public int dmDisplayFlags; public int dmDisplayFrequency; public int dmICMMethod; public int dmICMIntent;
+    public int dmMediaType; public int dmDitherType; public int dmReserved1; public int dmReserved2;
+    public int dmPanningWidth; public int dmPanningHeight;
+}
+[DllImport("user32.dll", CharSet = CharSet.Ansi)]
+public static extern bool EnumDisplaySettings(string deviceName, int modeNum, ref DEVMODE devMode);
+[DllImport("user32.dll", CharSet = CharSet.Ansi)]
+public static extern int ChangeDisplaySettings(ref DEVMODE devMode, int flags);
+
+public static DEVMODE NewMode() { DEVMODE d = new DEVMODE(); d.dmSize = (short)System.Runtime.InteropServices.Marshal.SizeOf(typeof(DEVMODE)); return d; }
+
+// Returns { width, height, current Hz, highest Hz at this resolution }
+public static int[] RefreshInfo() {
+    DEVMODE cur = NewMode();
+    if (!EnumDisplaySettings(null, -1, ref cur)) return null;
+    int max = cur.dmDisplayFrequency;
+    DEVMODE m = NewMode();
+    for (int i = 0; EnumDisplaySettings(null, i, ref m); i++) {
+        if (m.dmPelsWidth == cur.dmPelsWidth && m.dmPelsHeight == cur.dmPelsHeight && m.dmBitsPerPel == cur.dmBitsPerPel && m.dmDisplayFrequency > max)
+            max = m.dmDisplayFrequency;
+        m = NewMode();
+    }
+    return new int[] { cur.dmPelsWidth, cur.dmPelsHeight, cur.dmDisplayFrequency, max };
+}
+
+public static int SetRefresh(int hz) {
+    DEVMODE cur = NewMode();
+    if (!EnumDisplaySettings(null, -1, ref cur)) return -1;
+    cur.dmDisplayFrequency = hz;
+    cur.dmFields = 0x400000; // DM_DISPLAYFREQUENCY
+    return ChangeDisplaySettings(ref cur, 1); // CDS_UPDATEREGISTRY, 0 = success
+}
 '@
 
 # ---------- Registry helpers ----------
@@ -27,7 +69,9 @@ function Remove-Reg($Path, $Name) {
 }
 
 # ---------- Constants ----------
-$GUID_RE = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}'
+$APP_NAME      = "vzc1's optimizations"
+$APP_VERSION   = '3.0'
+$GUID_RE       = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}'
 $PLAN_BALANCED = '381b4222-f694-41f0-9685-ff5bb260df2e'
 $PLAN_HIGH     = '8c5e7fda-e8bf-4a96-9a85-cf4dbd8f9e7f'
 $PLAN_ULTIMATE = 'e9a42b02-d5df-448d-aa00-03f14749eb61'
@@ -35,6 +79,9 @@ $PLAN_NAME     = 'vzc1 Performance'
 $GPU_PREFS     = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
 $FN_EXE_NAME   = 'FortniteClient-Win64-Shipping.exe'
 $IFEO          = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$FN_EXE_NAME"
+$FN_INI        = Join-Path $env:LOCALAPPDATA 'FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini'
+$FN_INI_ORIG   = Join-Path $env:LOCALAPPDATA 'FortniteGame\Saved\Config\WindowsClient\GameUserSettings.vzc1-original.ini'
+$DATA_DIR      = Join-Path $env:LOCALAPPDATA 'vzc1-optimizations'
 
 function Find-FortniteExe {
     $dir = "$env:ProgramData\Epic\EpicGamesLauncher\Data\Manifests"
@@ -61,12 +108,12 @@ function Set-DxGlobal($Key, $Val) {
     Set-Reg $GPU_PREFS 'DirectXUserGlobalSettings' (($parts -join ';') + ';') 'String'
 }
 
-# ---------- The tweaks ----------
+# ---------- Tweaks ----------
 $Tweaks = @(
     [pscustomobject]@{
+        Id = 'power'; Group = 'Performance'
         Name = 'Max performance power plan'
-        Desc = 'Stops your CPU from clocking down between frames. Biggest help is smoother 1% lows (fewer random dips). Uses a bit more power.'
-        Tags = @('FPS')
+        Desc = 'Keeps your CPU at full speed instead of clocking down between frames. Fewer FPS dips.'
         Get  = { (powercfg /getactivescheme | Out-String) -match "$PLAN_NAME|FPS Boost Performance|$PLAN_HIGH" }
         On   = {
             $guid = $null
@@ -80,14 +127,14 @@ $Tweaks = @(
                 } else { $guid = $PLAN_HIGH }
             }
             powercfg /setactive $guid | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "This PC blocks custom power plans (common on newer laptops). Plug in and set Settings > Power mode to 'Best performance' instead." }
+            if ($LASTEXITCODE -ne 0) { throw "This PC blocks custom power plans. Set Settings > Power mode to Best performance instead." }
         }
         Off  = { powercfg /setactive $PLAN_BALANCED | Out-Null }
     }
     [pscustomobject]@{
-        Name = 'Kill Xbox background recording'
-        Desc = 'Game Bar capture can quietly eat GPU time while you play. This shuts off Game DVR recording completely.'
-        Tags = @('FPS')
+        Id = 'dvr'; Group = 'Performance'
+        Name = 'Turn off Game DVR'
+        Desc = 'Stops Xbox Game Bar from recording your gameplay in the background.'
         Get  = { (Get-Reg 'HKCU:\System\GameConfigStore' 'GameDVR_Enabled') -eq 0 }
         On   = {
             Set-Reg 'HKCU:\System\GameConfigStore' 'GameDVR_Enabled' 0
@@ -102,61 +149,51 @@ $Tweaks = @(
         }
     }
     [pscustomobject]@{
+        Id = 'gamemode'; Group = 'Performance'
         Name = 'Game Mode'
-        Desc = 'Windows holds back updates and background work while a game is running. It is supposed to be on by default; this makes sure it is.'
-        Tags = @('FPS')
+        Desc = 'Windows holds off updates and background work while a game is running.'
         Get  = { (Get-Reg 'HKCU:\Software\Microsoft\GameBar' 'AutoGameModeEnabled') -ne 0 }
         On   = { Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'AutoGameModeEnabled' 1 }
         Off  = { Set-Reg 'HKCU:\Software\Microsoft\GameBar' 'AutoGameModeEnabled' 0 }
     }
     [pscustomobject]@{
+        Id = 'hags'; Group = 'Performance'; Reboot = $true
         Name = 'Hardware GPU scheduling'
-        Desc = 'Lets the graphics card manage its own work queue. Can lower input delay on NVIDIA GTX 1000+ / AMD RX 5000+. Results vary per PC, so try a match with it on and off.'
-        Tags = @('Latency', 'Restart')
+        Desc = 'Can lower input delay on newer graphics cards. Try a match with it on and off. Needs a restart.'
         Get  = { (Get-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' 'HwSchMode') -eq 2 }
         On   = { Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' 'HwSchMode' 2 }
         Off  = { Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' 'HwSchMode' 1 }
-        Reboot = $true
     }
     [pscustomobject]@{
+        Id = 'windowed'; Group = 'Performance'
         Name = 'Optimizations for windowed games'
-        Desc = 'Gives Windowed Fullscreen the same low latency as real fullscreen, so alt-tabbing is instant without the input delay.'
-        Tags = @('Latency', 'Win 11')
+        Desc = 'Gives windowed fullscreen the same low input delay as real fullscreen. Windows 11 only.'
         Available = { [Environment]::OSVersion.Version.Build -ge 22000 }
         Get  = { (Get-Reg $GPU_PREFS 'DirectXUserGlobalSettings') -like '*SwapEffectUpgradeEnable=1*' }
         On   = { Set-DxGlobal 'SwapEffectUpgradeEnable' 1 }
         Off  = { Set-DxGlobal 'SwapEffectUpgradeEnable' 0 }
     }
     [pscustomobject]@{
-        Name = 'Turn off mouse acceleration'
-        Desc = 'Moving your mouse the same distance always moves your crosshair the same amount, no matter how fast you flick. Builds real muscle memory.'
-        Tags = @('Aim')
-        Get  = { (Get-Reg 'HKCU:\Control Panel\Mouse' 'MouseSpeed') -eq '0' }
-        On   = { [void][Win.Mouse]::SystemParametersInfo(4, 0, [int[]](0, 0, 0), 3) }
-        Off  = { [void][Win.Mouse]::SystemParametersInfo(4, 0, [int[]](6, 10, 1), 3) }
-    }
-    [pscustomobject]@{
-        Name = 'Fortnite gets high CPU priority'
-        Desc = 'Tells Windows to always give Fortnite first dibs on the CPU over Discord, browsers and other background stuff. Applies next time you launch.'
-        Tags = @('FPS')
+        Id = 'priority'; Group = 'Performance'
+        Name = 'High CPU priority for Fortnite'
+        Desc = 'Fortnite gets the CPU before Discord, browsers and other apps. Applies the next time you launch it.'
         Get  = { (Get-Reg "$IFEO\PerfOptions" 'CpuPriorityClass') -eq 3 }
         On   = { Set-Reg "$IFEO\PerfOptions" 'CpuPriorityClass' 3 }
         Off  = { Remove-Item "$IFEO\PerfOptions" -Recurse -Force -ErrorAction SilentlyContinue }
     }
     [pscustomobject]@{
-        Name = 'Force Fortnite onto your real GPU'
-        Desc = 'Gaming laptops sometimes run Fortnite on the weak built-in graphics chip. This forces the dedicated card. Can be a massive FPS jump on laptops.'
-        Tags = @('FPS', 'Laptop')
+        Id = 'gpu'; Group = 'Performance'
+        Name = 'Run Fortnite on your dedicated GPU'
+        Desc = 'Stops laptops from running Fortnite on the weak built-in graphics chip.'
         Available = { [bool]$FN_PATH }
         Get  = { $FN_PATH -and ((Get-Reg $GPU_PREFS $FN_PATH) -like '*GpuPreference=2*') }
         On   = { Set-Reg $GPU_PREFS $FN_PATH 'GpuPreference=2;' 'String' }
         Off  = { Remove-Reg $GPU_PREFS $FN_PATH }
     }
     [pscustomobject]@{
-        Section = 'NETWORK + INPUT DELAY'
-        Name = 'Stop network adapter power saving'
-        Desc = 'Windows can put your Wi-Fi or Ethernet card to sleep to save power, which causes random lag spikes and rubberbanding. This keeps it fully awake.'
-        Tags = @('Ping')
+        Id = 'nicpower'; Group = 'Network'
+        Name = 'Network card power saving off'
+        Desc = 'Stops Windows putting your Wi-Fi or Ethernet card to sleep, which causes lag spikes.'
         Get  = {
             $pm = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Get-NetAdapterPowerManagement -ErrorAction SilentlyContinue
             $pm -and -not ($pm | Where-Object { $_.AllowComputerToTurnOffDevice -eq 'Enabled' })
@@ -165,19 +202,17 @@ $Tweaks = @(
         Off  = { Get-NetAdapter -Physical | ForEach-Object { Set-NetAdapterPowerManagement -Name $_.Name -AllowComputerToTurnOffDevice Enabled -ErrorAction SilentlyContinue } }
     }
     [pscustomobject]@{
-        Section = $null
-        Name = 'Stop Windows uploading updates to strangers'
-        Desc = 'By default Windows uses your upload to send update files to other PCs on the internet. That fills your connection mid-game and spikes your ping. This turns it off.'
-        Tags = @('Ping')
+        Id = 'dosvc'; Group = 'Network'
+        Name = 'Stop update sharing'
+        Desc = 'Stops Windows uploading update files to other PCs on the internet while you play.'
         Get  = { (Get-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization' 'DODownloadMode') -eq 0 }
         On   = { Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization' 'DODownloadMode' 0 }
         Off  = { Remove-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization' 'DODownloadMode' }
     }
     [pscustomobject]@{
-        Section = $null
-        Name = 'Remove network throttling'
-        Desc = 'Windows slows down network packets while audio or video is playing, like Discord or Spotify. This removes that and gives games more CPU time. Small effect, but it is real.'
-        Tags = @('Ping', 'Latency')
+        Id = 'throttle'; Group = 'Network'
+        Name = 'Network throttling off'
+        Desc = 'Removes the limit Windows puts on network traffic while audio is playing. Small effect.'
         Get  = { (Get-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex') -eq -1 }
         On   = {
             Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex' -1
@@ -189,10 +224,17 @@ $Tweaks = @(
         }
     }
     [pscustomobject]@{
-        Section = $null
-        Name = 'Kill the Sticky Keys popup'
-        Desc = 'Spamming Shift while building or crouching opens the Sticky Keys window and kicks you out of the game. This stops it from ever popping up.'
-        Tags = @('Input')
+        Id = 'accel'; Group = 'Mouse and keyboard'
+        Name = 'Mouse acceleration off'
+        Desc = 'The same hand movement always moves your crosshair the same distance, however fast you flick.'
+        Get  = { (Get-Reg 'HKCU:\Control Panel\Mouse' 'MouseSpeed') -eq '0' }
+        On   = { [void][Vz.Native]::SystemParametersInfo(4, 0, [int[]](0, 0, 0), 3) }
+        Off  = { [void][Vz.Native]::SystemParametersInfo(4, 0, [int[]](6, 10, 1), 3) }
+    }
+    [pscustomobject]@{
+        Id = 'sticky'; Group = 'Mouse and keyboard'
+        Name = 'Sticky Keys shortcut off'
+        Desc = "Spamming Shift won't pop up the Sticky Keys box and kick you out of the game."
         Get  = { (Get-Reg 'HKCU:\Control Panel\Accessibility\StickyKeys' 'Flags') -eq '506' }
         On   = {
             Set-Reg 'HKCU:\Control Panel\Accessibility\StickyKeys' 'Flags' '506' 'String'
@@ -207,14 +249,137 @@ $Tweaks = @(
     }
 )
 
+# ---------- Fortnite settings file ----------
+$FN_SEC = '/Script/FortniteGame.FortGameUserSettings'
 
-$APP_VERSION = '2.0'
+function Get-IniLines {
+    if (-not (Test-Path -LiteralPath $FN_INI)) { return $null }
+    $arr = @([IO.File]::ReadAllLines($FN_INI))
+    return ,(New-Object System.Collections.ArrayList (, $arr))
+}
+function Get-IniValue($lines, $section, $key) {
+    $in = $false
+    foreach ($l in $lines) {
+        $t = $l.Trim()
+        if ($t.StartsWith('[') -and $t.EndsWith(']')) { $in = ($t -eq "[$section]"); continue }
+        if ($in -and $t.StartsWith("$key=", [StringComparison]::OrdinalIgnoreCase)) { return $t.Substring($key.Length + 1) }
+    }
+    return $null
+}
+function Set-IniValue($lines, $section, $key, $value) {
+    $in = $false; $secIdx = -1; $lastIdx = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $t = ([string]$lines[$i]).Trim()
+        if ($t.StartsWith('[') -and $t.EndsWith(']')) {
+            if ($in) { break }
+            $in = ($t -eq "[$section]")
+            if ($in) { $secIdx = $i; $lastIdx = $i }
+            continue
+        }
+        if ($in) {
+            if ($t) { $lastIdx = $i }
+            if ($t.StartsWith("$key=", [StringComparison]::OrdinalIgnoreCase)) { $lines[$i] = "$key=$value"; return }
+        }
+    }
+    if ($secIdx -ge 0) { $lines.Insert($lastIdx + 1, "$key=$value") }
+    else { [void]$lines.Add(''); [void]$lines.Add("[$section]"); [void]$lines.Add("$key=$value") }
+}
+function Save-IniLines($lines) {
+    if (-not (Test-Path -LiteralPath $FN_INI_ORIG)) { Copy-Item -LiteralPath $FN_INI -Destination $FN_INI_ORIG -Force }
+    $f = Get-Item -LiteralPath $FN_INI
+    if ($f.IsReadOnly) { $f.IsReadOnly = $false }
+    [IO.File]::WriteAllLines($FN_INI, [string[]]$lines.ToArray(), (New-Object System.Text.UTF8Encoding $false))
+}
+function Test-FortniteRunning { [bool](Get-Process -Name 'FortniteClient-Win64-Shipping' -ErrorAction SilentlyContinue) }
 
-$TagColors = @{
-    'FPS' = '#4ADE80'; 'Latency' = '#60A5FA'; 'Aim' = '#FBBF24'; 'Laptop' = '#C084FC'
-    'Restart' = '#F87171'; 'Win 11' = '#94A3B8'; 'Ping' = '#22D3EE'; 'Input' = '#F472B6'
+# ---------- Startup apps ----------
+$STARTUP_SOURCES = @(
+    @{ Kind = 'reg'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; Approved = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'; Scope = 'You' }
+    @{ Kind = 'reg'; Path = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'; Approved = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'; Scope = 'All users' }
+    @{ Kind = 'reg'; Path = 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'; Approved = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32'; Scope = 'All users' }
+    @{ Kind = 'dir'; Path = (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'); Approved = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder'; Scope = 'You' }
+    @{ Kind = 'dir'; Path = (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Startup'); Approved = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder'; Scope = 'All users' }
+)
+
+function Get-ExeFromCommand($cmd) {
+    if (-not $cmd) { return $null }
+    $c = [Environment]::ExpandEnvironmentVariables($cmd.Trim())
+    if ($c.StartsWith('"')) { $e = $c.IndexOf('"', 1); if ($e -gt 1) { return $c.Substring(1, $e - 1) } }
+    $i = $c.ToLower().IndexOf('.exe')
+    if ($i -gt 0) { return $c.Substring(0, $i + 4) }
+    return $c.Split(' ')[0]
 }
 
+function Get-StartupItems {
+    $items = @()
+    foreach ($src in $STARTUP_SOURCES) {
+        $entries = @()
+        if ($src.Kind -eq 'reg') {
+            $key = Get-Item -Path $src.Path -ErrorAction SilentlyContinue
+            if ($key) { foreach ($n in $key.GetValueNames()) { if ($n) { $entries += @{ Name = $n; Target = [string]$key.GetValue($n) } } } }
+        } elseif (Test-Path $src.Path) {
+            foreach ($f in Get-ChildItem -LiteralPath $src.Path -File -ErrorAction SilentlyContinue) {
+                if ($f.Name -ieq 'desktop.ini') { continue }
+                $target = $f.FullName
+                if ($f.Extension -ieq '.lnk') { try { $target = (New-Object -ComObject WScript.Shell).CreateShortcut($f.FullName).TargetPath } catch { } }
+                $entries += @{ Name = $f.Name; Target = $target }
+            }
+        }
+        foreach ($e in $entries) {
+            $bytes = Get-Reg $src.Approved $e.Name
+            $enabled = -not ($bytes -is [byte[]] -and $bytes.Length -gt 0 -and ($bytes[0] % 2) -eq 1)
+            $exe = Get-ExeFromCommand $e.Target
+            $label = $e.Name -replace '\.lnk$', ''
+            $publisher = ''
+            if ($exe -and (Test-Path -LiteralPath $exe -ErrorAction SilentlyContinue)) {
+                try {
+                    $vi = (Get-Item -LiteralPath $exe).VersionInfo
+                    if ($vi.FileDescription) { $label = $vi.FileDescription.Trim() }
+                    if ($vi.CompanyName) { $publisher = $vi.CompanyName.Trim() }
+                } catch { }
+            }
+            $items += [pscustomobject]@{ Name = $e.Name; Label = $label; Publisher = $publisher; Scope = $src.Scope; Approved = $src.Approved; Enabled = $enabled }
+        }
+    }
+    $items | Sort-Object Label
+}
+
+function Set-StartupEnabled($item, [bool]$on) {
+    $b = New-Object byte[] 12
+    if ($on) { $b[0] = 2 } else {
+        $b[0] = 3
+        [Array]::Copy([BitConverter]::GetBytes((Get-Date).ToFileTime()), 0, $b, 4, 8)
+    }
+    Set-Reg $item.Approved $item.Name $b 'Binary'
+}
+
+# ---------- Background apps ----------
+$KEEP_PROCESSES = @(
+    'idle','system','registry','smss','csrss','wininit','winlogon','services','lsass','svchost','fontdrvhost','dwm','explorer',
+    'sihost','taskhostw','ctfmon','runtimebroker','searchhost','searchapp','searchindexer','startmenuexperiencehost','shellexperiencehost',
+    'textinputhost','applicationframehost','systemsettings','securityhealthsystray','securityhealthservice','msmpeng','nissrv','smartscreen',
+    'audiodg','spoolsv','dllhost','conhost','widgets','widgetservice','lockapp','memory compression','wudfhost','dashost','useroobebroker',
+    'powershell','pwsh','vzc1-optimizations','fortniteclient-win64-shipping','fortnitelauncher','epicgameslauncher','easyanticheat',
+    'easyanticheat_eos','beservice','nvcontainer','nvdisplay.container','amdrsserv','radeonsoftware','igfxem','crashpad_handler',
+    'phoneexperiencehost','gamebarpresencewriter','msedgewebview2'
+)
+function Get-HeavyApps {
+    $sid = (Get-Process -Id $PID).SessionId
+    Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.SessionId -eq $sid -and $_.Id -ne $PID -and ($KEEP_PROCESSES -notcontains $_.ProcessName.ToLower()) } |
+        Group-Object ProcessName |
+        ForEach-Object {
+            $mem = ($_.Group | Measure-Object WorkingSet64 -Sum).Sum
+            $first = $_.Group[0]
+            $label = $_.Name
+            try { if ($first.MainModule.FileVersionInfo.FileDescription) { $label = $first.MainModule.FileVersionInfo.FileDescription.Trim() } } catch { }
+            [pscustomobject]@{ Process = $_.Name; Label = $label; Count = $_.Count; Bytes = $mem }
+        } |
+        Where-Object { $_.Bytes -gt 100MB } |
+        Sort-Object Bytes -Descending |
+        Select-Object -First 15
+}
+function Format-Bytes($b) { if ($b -ge 1GB) { '{0:0.0} GB' -f ($b / 1GB) } else { '{0:0} MB' -f ($b / 1MB) } }
 # ---------- Fortnite server map ----------
 # Each matchmaking region has an official Epic ping host. Each host resolves to
 # servers in several real datacenters (for example, NA West = Oregon + San Jose).
@@ -407,16 +572,17 @@ $PingWorker = {
     }
 }
 
+
 # ---------- UI ----------
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="vzc1's optimizations" Width="1040" Height="760" MinWidth="860" MinHeight="560"
+        Title="vzc1's optimizations" Width="1080" Height="740" MinWidth="900" MinHeight="560"
         WindowStartupLocation="CenterScreen" WindowStyle="None" AllowsTransparency="True"
         Background="Transparent" ResizeMode="CanResizeWithGrip"
-        FontFamily="Segoe UI Variable Text, Segoe UI" TextOptions.TextFormattingMode="Display">
+        FontFamily="Segoe UI" TextOptions.TextFormattingMode="Display" UseLayoutRounding="True">
   <Window.Resources>
-    <SolidColorBrush x:Key="Accent" Color="#7C5CFF"/>
+    <FontFamily x:Key="Head">Bahnschrift SemiCondensed, Bahnschrift, Segoe UI</FontFamily>
 
     <Style TargetType="ScrollBar">
       <Setter Property="Width" Value="6"/>
@@ -429,7 +595,7 @@ $PingWorker = {
                 <Thumb>
                   <Thumb.Template>
                     <ControlTemplate TargetType="Thumb">
-                      <Border CornerRadius="3" Background="#2C3140"/>
+                      <Border CornerRadius="3" Background="#33383F"/>
                     </ControlTemplate>
                   </Thumb.Template>
                 </Thumb>
@@ -442,20 +608,24 @@ $PingWorker = {
 
     <Style x:Key="Switch" TargetType="CheckBox">
       <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Focusable" Value="True"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="CheckBox">
-            <Grid Width="46" Height="24" Background="Transparent">
-              <Border x:Name="Track" CornerRadius="12" Background="#252A36" BorderBrush="#323848" BorderThickness="1"/>
-              <Ellipse x:Name="Knob" Width="16" Height="16" Fill="#8B93A7" HorizontalAlignment="Left" Margin="4,0,0,0"/>
+            <Grid Width="40" Height="22" Background="Transparent">
+              <Border x:Name="Track" CornerRadius="11" Background="#2A2E34" BorderBrush="#3A3F46" BorderThickness="1"/>
+              <Border x:Name="Knob" Width="14" Height="14" CornerRadius="7" Background="#8A9099" HorizontalAlignment="Left" Margin="4,0,0,0"/>
             </Grid>
             <ControlTemplate.Triggers>
               <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="Track" Property="Background" Value="#7C5CFF"/>
-                <Setter TargetName="Track" Property="BorderBrush" Value="#9479FF"/>
-                <Setter TargetName="Knob" Property="Fill" Value="White"/>
+                <Setter TargetName="Track" Property="Background" Value="#F2A93B"/>
+                <Setter TargetName="Track" Property="BorderBrush" Value="#F2A93B"/>
+                <Setter TargetName="Knob" Property="Background" Value="#1A1407"/>
                 <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
                 <Setter TargetName="Knob" Property="Margin" Value="0,0,4,0"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Track" Property="BorderBrush" Value="#ECEEF0"/>
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Opacity" Value="0.3"/>
@@ -467,22 +637,81 @@ $PingWorker = {
     </Style>
 
     <Style x:Key="Btn" TargetType="Button">
-      <Setter Property="Foreground" Value="White"/>
-      <Setter Property="Background" Value="#1E2230"/>
-      <Setter Property="FontSize" Value="13"/>
-      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="#ECEEF0"/>
+      <Setter Property="Background" Value="#2A2E34"/>
+      <Setter Property="BorderBrush" Value="#3A3F46"/>
+      <Setter Property="FontFamily" Value="{StaticResource Head}"/>
+      <Setter Property="FontSize" Value="14"/>
       <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="Padding" Value="18,10"/>
+      <Setter Property="Padding" Value="16,8"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="9" Padding="{TemplateBinding Padding}">
+            <Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="{TemplateBinding Padding}">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.88"/></Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.85"/></Trigger>
               <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.7"/></Trigger>
-              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="B" Property="Opacity" Value="0.4"/></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#ECEEF0"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="B" Property="Opacity" Value="0.35"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource Btn}">
+      <Setter Property="Foreground" Value="#1A1407"/>
+      <Setter Property="Background" Value="#F2A93B"/>
+      <Setter Property="BorderBrush" Value="#F2A93B"/>
+    </Style>
+
+    <Style x:Key="Seg" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#B8BDC4"/>
+      <Setter Property="FontFamily" Value="{StaticResource Head}"/>
+      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Margin" Value="0,0,-1,0"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="B" Background="#23272C" BorderBrush="#3A3F46" BorderThickness="1" Padding="12,6">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#2C3036"/></Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="B" Property="Background" Value="#F2A93B"/>
+                <Setter TargetName="B" Property="BorderBrush" Value="#F2A93B"/>
+                <Setter Property="Foreground" Value="#1A1407"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#ECEEF0"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="Nav" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#9BA1A8"/>
+      <Setter Property="FontFamily" Value="{StaticResource Head}"/>
+      <Setter Property="FontSize" Value="16"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Grid x:Name="G" Background="Transparent">
+              <Rectangle x:Name="Bar" Width="3" HorizontalAlignment="Left" Fill="Transparent"/>
+              <ContentPresenter Margin="22,9,12,9" VerticalAlignment="Center"/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="#ECEEF0"/></Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Bar" Property="Fill" Value="#F2A93B"/>
+                <Setter TargetName="G" Property="Background" Value="#1B1E22"/>
+                <Setter Property="Foreground" Value="#FFFFFF"/>
+              </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -490,12 +719,11 @@ $PingWorker = {
     </Style>
 
     <Style x:Key="ChromeBtn" TargetType="Button">
-      <Setter Property="Foreground" Value="#8B93A7"/>
+      <Setter Property="Foreground" Value="#9BA1A8"/>
       <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
       <Setter Property="FontSize" Value="10"/>
       <Setter Property="Width" Value="46"/>
-      <Setter Property="Height" Value="34"/>
-      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Height" Value="32"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
@@ -504,41 +732,8 @@ $PingWorker = {
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="B" Property="Background" Value="#1E2230"/>
-                <Setter Property="Foreground" Value="White"/>
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <Style x:Key="Nav" TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#8B93A7"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="Margin" Value="0,0,0,4"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="RadioButton">
-            <Border x:Name="B" CornerRadius="10" Background="Transparent" Padding="14,11">
-              <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="28"/>
-                  <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock x:Name="Icon" Text="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" VerticalAlignment="Center" Foreground="{TemplateBinding Foreground}"/>
-                <ContentPresenter Grid.Column="1" VerticalAlignment="Center"/>
-              </Grid>
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="B" Property="Background" Value="#161A24"/>
-                <Setter Property="Foreground" Value="#D6DBE6"/>
-              </Trigger>
-              <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="B" Property="Background" Value="#1F1A3D"/>
-                <Setter Property="Foreground" Value="White"/>
-                <Setter TargetName="Icon" Property="Foreground" Value="#A08BFF"/>
+                <Setter TargetName="B" Property="Background" Value="#2A2E34"/>
+                <Setter Property="Foreground" Value="#FFFFFF"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -547,164 +742,45 @@ $PingWorker = {
     </Style>
   </Window.Resources>
 
-  <Border CornerRadius="14" Background="#0B0D12" BorderBrush="#1C2030" BorderThickness="1">
+  <Border CornerRadius="8" Background="#16181B" BorderBrush="#2C3036" BorderThickness="1">
     <Grid>
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="230"/>
+        <ColumnDefinition Width="210"/>
         <ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
 
-      <!-- Sidebar -->
-      <Border Grid.Column="0" Background="#0E1017" CornerRadius="14,0,0,14" BorderBrush="#1C2030" BorderThickness="0,0,1,0">
-        <DockPanel Margin="16,22,16,18">
-          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,0,0,30" x:Name="Logo">
-            <Border Width="34" Height="34" CornerRadius="10">
-              <Border.Background>
-                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                  <GradientStop Color="#7C5CFF" Offset="0"/>
-                  <GradientStop Color="#22D3EE" Offset="1"/>
-                </LinearGradientBrush>
-              </Border.Background>
-              <TextBlock Text="&#xE945;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="16" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-            <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
-              <TextBlock Text="VZC1'S" FontSize="17" FontWeight="Black" Foreground="White"/>
-              <TextBlock Text="optimizations" FontSize="12" FontWeight="SemiBold" Foreground="#A08BFF"/>
-            </StackPanel>
+      <Border Grid.Column="0" Background="#111315" CornerRadius="8,0,0,8">
+        <DockPanel>
+          <StackPanel x:Name="Logo" DockPanel.Dock="Top" Margin="22,26,16,30" Background="Transparent">
+            <TextBlock Text="vzc1" FontFamily="Bahnschrift" FontWeight="Bold" FontSize="34" Foreground="#FFFFFF" Margin="0,0,0,-6"/>
+            <TextBlock Text="optimizations" FontFamily="{StaticResource Head}" FontSize="17" Foreground="#F2A93B"/>
           </StackPanel>
-
-          <Border DockPanel.Dock="Bottom" Background="#13161F" CornerRadius="10" Padding="12,10">
-            <StackPanel>
-              <TextBlock x:Name="SideConn" FontSize="12" FontWeight="SemiBold" Foreground="White"/>
-              <TextBlock x:Name="SideFn" FontSize="11" Foreground="#6B7389" Margin="0,3,0,0" TextWrapping="Wrap"/>
-              <TextBlock x:Name="SideVer" FontSize="11" Foreground="#4B5263" Margin="0,8,0,0"/>
-            </StackPanel>
-          </Border>
-
-          <StackPanel>
-            <RadioButton x:Name="NavBoost" Style="{StaticResource Nav}" Tag="&#xE945;" IsChecked="True" GroupName="nav">
-              <TextBlock Text="Boost" FontSize="14" FontWeight="SemiBold"/>
-            </RadioButton>
-            <RadioButton x:Name="NavPing" Style="{StaticResource Nav}" Tag="&#xE701;" GroupName="nav">
-              <TextBlock Text="Server Ping" FontSize="14" FontWeight="SemiBold"/>
-            </RadioButton>
-            <RadioButton x:Name="NavTools" Style="{StaticResource Nav}" Tag="&#xE90F;" GroupName="nav">
-              <TextBlock Text="Tools" FontSize="14" FontWeight="SemiBold"/>
-            </RadioButton>
+          <StackPanel DockPanel.Dock="Bottom" Margin="22,0,16,18">
+            <TextBlock x:Name="SideConn" FontSize="12" Foreground="#9BA1A8"/>
+            <TextBlock x:Name="SideVer" FontSize="11" Foreground="#5C626A" Margin="0,4,0,0"/>
           </StackPanel>
+          <StackPanel x:Name="NavList"/>
         </DockPanel>
       </Border>
 
-      <!-- Main -->
       <Grid Grid.Column="1">
         <Grid.RowDefinitions>
-          <RowDefinition Height="38"/>
+          <RowDefinition Height="32"/>
           <RowDefinition Height="*"/>
           <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <Grid x:Name="TitleBar" Grid.Row="0" Background="Transparent">
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="BtnMin" Style="{StaticResource ChromeBtn}" Content="&#xE921;"/>
             <Button x:Name="BtnClose" Style="{StaticResource ChromeBtn}" Content="&#xE8BB;"/>
           </StackPanel>
         </Grid>
 
-        <!-- BOOST PAGE -->
-        <Grid x:Name="PageBoost" Grid.Row="1" Margin="34,0,26,0">
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-          </Grid.RowDefinitions>
-          <Grid Grid.Row="0" Margin="0,0,8,18">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <StackPanel>
-              <TextBlock Text="Boost" FontSize="28" FontWeight="Bold" Foreground="White"/>
-              <TextBlock Text="Only tweaks that actually do something. Flip a switch to apply it, flip it back to undo it." Foreground="#8B93A7" FontSize="13" Margin="0,4,0,14" TextWrapping="Wrap"/>
-              <Grid Width="320" HorizontalAlignment="Left">
-                <Border Height="6" CornerRadius="3" Background="#1E2230"/>
-                <Border x:Name="ProgFill" Height="6" CornerRadius="3" HorizontalAlignment="Left" Width="0">
-                  <Border.Background>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                      <GradientStop Color="#7C5CFF" Offset="0"/>
-                      <GradientStop Color="#22D3EE" Offset="1"/>
-                    </LinearGradientBrush>
-                  </Border.Background>
-                </Border>
-              </Grid>
-              <TextBlock x:Name="ProgText" Foreground="#A0A8BA" FontSize="12" Margin="0,8,0,0"/>
-            </StackPanel>
-            <Button x:Name="BtnAll" Grid.Column="1" Content="Turn on everything" Style="{StaticResource Btn}" Background="#7C5CFF" VerticalAlignment="Top" Margin="0,8,0,0"/>
-          </Grid>
-          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
-            <StackPanel x:Name="List" Margin="0,0,0,20"/>
-          </ScrollViewer>
-        </Grid>
+        <Grid x:Name="Pages" Grid.Row="1"/>
 
-        <!-- PING PAGE -->
-        <Grid x:Name="PagePing" Grid.Row="1" Margin="34,0,26,0" Visibility="Collapsed">
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-          </Grid.RowDefinitions>
-          <Grid Grid.Row="0" Margin="0,0,8,18">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <StackPanel>
-              <TextBlock Text="Server Ping" FontSize="28" FontWeight="Bold" Foreground="White"/>
-              <TextBlock Text="Live ping to every Fortnite datacenter, using Epic's own matchmaking ping servers." Foreground="#8B93A7" FontSize="13" Margin="0,4,0,0" TextWrapping="Wrap"/>
-            </StackPanel>
-            <Button x:Name="BtnPing" Grid.Column="1" Content="Start live test" Style="{StaticResource Btn}" Background="#0891B2" VerticalAlignment="Top" Margin="0,8,0,0" MinWidth="150"/>
-          </Grid>
-
-          <Border Grid.Row="1" CornerRadius="14" Padding="24,20" Margin="0,0,8,16" BorderBrush="#2A2550" BorderThickness="1">
-            <Border.Background>
-              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#1B1736" Offset="0"/>
-                <GradientStop Color="#0F1A26" Offset="1"/>
-              </LinearGradientBrush>
-            </Border.Background>
-            <Grid>
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-              </Grid.ColumnDefinitions>
-              <StackPanel VerticalAlignment="Center">
-                <TextBlock Text="BEST SERVER FOR YOU" FontSize="11" FontWeight="Bold" Foreground="#A08BFF"/>
-                <TextBlock x:Name="HeroCity" Text="Press Start" FontSize="26" FontWeight="Bold" Foreground="White" Margin="0,6,0,2"/>
-                <TextBlock x:Name="HeroTip" Text="Tests every datacenter at the same time. Takes about 10 seconds to settle." FontSize="13" Foreground="#A0A8BA" TextWrapping="Wrap"/>
-              </StackPanel>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0">
-                <TextBlock x:Name="HeroMs" Text="--" FontSize="56" FontWeight="Black" Foreground="White"/>
-                <TextBlock Text="ms" FontSize="18" FontWeight="SemiBold" Foreground="#8B93A7" VerticalAlignment="Bottom" Margin="6,0,0,14"/>
-              </StackPanel>
-            </Grid>
-          </Border>
-
-          <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
-            <StackPanel x:Name="PingList" Margin="0,0,0,20"/>
-          </ScrollViewer>
-        </Grid>
-
-        <!-- TOOLS PAGE -->
-        <Grid x:Name="PageTools" Grid.Row="1" Margin="34,0,26,0" Visibility="Collapsed">
-          <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
-            <StackPanel x:Name="ToolsList" Margin="0,0,0,20">
-              <TextBlock Text="Tools" FontSize="28" FontWeight="Bold" Foreground="White"/>
-              <TextBlock Text="Safety net and cleanup." Foreground="#8B93A7" FontSize="13" Margin="0,4,0,18"/>
-            </StackPanel>
-          </ScrollViewer>
-        </Grid>
-
-        <Border Grid.Row="2" Background="#0E1017" CornerRadius="0,0,14,0" BorderBrush="#1C2030" BorderThickness="0,1,0,0" Padding="34,10,40,10">
-          <TextBlock x:Name="Status" Foreground="#8B93A7" FontSize="12" TextWrapping="Wrap"
-                     Text="Tip: open Tools and make a restore point first, so you can always roll back."/>
+        <Border Grid.Row="2" BorderBrush="#2C3036" BorderThickness="0,1,0,0" Padding="36,9,40,9">
+          <TextBlock x:Name="Status" Foreground="#9BA1A8" FontSize="12" TextWrapping="Wrap" Text="Ready."/>
         </Border>
       </Grid>
     </Grid>
@@ -714,288 +790,696 @@ $PingWorker = {
 
 $window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 function W($name) { $window.FindName($name) }
+
+# ---------- Palette ----------
+$C = @{
+    Bg = '#16181B'; Panel = '#1D2024'; Panel2 = '#23272C'; Line = '#2C3036'
+    Text = '#ECEEF0'; Muted = '#9BA1A8'; Dim = '#6C727A'
+    Accent = '#F2A93B'; OnAccent = '#1A1407'; Good = '#5BD38A'; Warn = '#F2C94C'; Bad = '#EF6461'
+}
+$HEAD = $window.FindResource('Head')
 $bc = New-Object Windows.Media.BrushConverter
 $BrushCache = @{}
 function B($hex) {
-    if (-not $BrushCache.ContainsKey($hex)) { $b = $bc.ConvertFromString($hex); $b.Freeze(); $BrushCache[$hex] = $b }
+    if (-not $BrushCache.ContainsKey($hex)) { $br = $bc.ConvertFromString($hex); $br.Freeze(); $BrushCache[$hex] = $br }
     $BrushCache[$hex]
 }
 function T($l, $t, $r, $b) { New-Object Windows.Thickness $l, $t, $r, $b }
 
-$List = W 'List'; $Status = W 'Status'; $PingList = W 'PingList'
+# ---------- Small UI builders ----------
+function New-Text($text, $size = 13, $color = $C.Text, $weight = 'Normal', [switch]$Head, [switch]$Wrap) {
+    $t = New-Object Windows.Controls.TextBlock
+    $t.Text = $text; $t.FontSize = $size; $t.Foreground = B $color
+    $t.FontWeight = [Windows.FontWeights]::$weight
+    if ($Head) { $t.FontFamily = $HEAD }
+    if ($Wrap) { $t.TextWrapping = 'Wrap' }
+    $t
+}
+function New-Button($text, [switch]$Primary, $onClick) {
+    $b = New-Object Windows.Controls.Button
+    $b.Style = $window.FindResource($(if ($Primary) { 'Primary' } else { 'Btn' }))
+    $b.Content = $text
+    $b.VerticalAlignment = 'Center'
+    if ($onClick) { $b.Add_Click($onClick) }
+    $b
+}
+function New-Switch($checked) {
+    $cb = New-Object Windows.Controls.CheckBox
+    $cb.Style = $window.FindResource('Switch')
+    $cb.VerticalAlignment = 'Center'
+    $cb.IsChecked = [bool]$checked
+    $cb
+}
+function New-Panel {
+    $p = New-Object Windows.Controls.Border
+    $p.Background = B $C.Panel
+    $p.BorderBrush = B $C.Line
+    $p.BorderThickness = T 1 1 1 1
+    $p.CornerRadius = New-Object Windows.CornerRadius 6
+    $p.Margin = T 0 0 0 18
+    $p.Child = New-Object Windows.Controls.StackPanel
+    $p
+}
+function Add-PanelItem($panel, $element) {
+    if ($panel.Child.Children.Count -gt 0) {
+        $sep = New-Object Windows.Controls.Border
+        $sep.Height = 1; $sep.Background = B $C.Line
+        [void]$panel.Child.Children.Add($sep)
+    }
+    [void]$panel.Child.Children.Add($element)
+}
+function New-Row($title, $desc, $right, $leftAdornment) {
+    $g = New-Object Windows.Controls.Grid
+    $g.Margin = T 18 13 18 13
+    $cols = @()
+    if ($leftAdornment) { $cols += 'auto' }
+    $cols += 'star'; $cols += 'auto'
+    foreach ($c in $cols) {
+        $cd = New-Object Windows.Controls.ColumnDefinition
+        $cd.Width = if ($c -eq 'star') { New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star) } else { [Windows.GridLength]::Auto }
+        $g.ColumnDefinitions.Add($cd)
+    }
+    $col = 0
+    if ($leftAdornment) {
+        $leftAdornment.Margin = T 0 5 14 0
+        $leftAdornment.VerticalAlignment = 'Top'
+        [void]$g.Children.Add($leftAdornment); $col = 1
+    }
+    $sp = New-Object Windows.Controls.StackPanel
+    $sp.Margin = T 0 0 24 0
+    $sp.VerticalAlignment = 'Center'
+    [void]$sp.Children.Add((New-Text $title 14 $C.Text 'SemiBold'))
+    if ($desc) {
+        $d = New-Text $desc 12.5 $C.Muted -Wrap
+        $d.Margin = T 0 3 0 0
+        $d.MaxWidth = 620; $d.HorizontalAlignment = 'Left'
+        [void]$sp.Children.Add($d)
+    }
+    [Windows.Controls.Grid]::SetColumn($sp, $col)
+    [void]$g.Children.Add($sp)
+    if ($right) {
+        $right.VerticalAlignment = 'Center'
+        [Windows.Controls.Grid]::SetColumn($right, $col + 1)
+        [void]$g.Children.Add($right)
+    }
+    $g
+}
+function New-Dot($color) {
+    $e = New-Object Windows.Shapes.Ellipse
+    $e.Width = 9; $e.Height = 9; $e.Fill = B $color
+    $e
+}
+function Add-Heading($body, $text) {
+    $h = New-Text $text 17 $C.Text 'SemiBold' -Head
+    $h.Margin = T 0 6 0 9
+    [void]$body.Children.Add($h)
+}
+function Add-PageHeader($body, $title, $sub, $right) {
+    $g = New-Object Windows.Controls.Grid
+    $g.Margin = T 0 6 0 22
+    $c1 = New-Object Windows.Controls.ColumnDefinition; $c1.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
+    $c2 = New-Object Windows.Controls.ColumnDefinition; $c2.Width = [Windows.GridLength]::Auto
+    $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2)
+    $sp = New-Object Windows.Controls.StackPanel
+    [void]$sp.Children.Add((New-Text $title 34 $C.Text 'SemiBold' -Head))
+    if ($sub) {
+        $s = New-Text $sub 13 $C.Muted -Wrap
+        $s.MaxWidth = 600; $s.HorizontalAlignment = 'Left'; $s.Margin = T 0 2 0 0
+        [void]$sp.Children.Add($s)
+    }
+    [void]$g.Children.Add($sp)
+    if ($right) { $right.VerticalAlignment = 'Bottom'; [Windows.Controls.Grid]::SetColumn($right, 1); [void]$g.Children.Add($right) }
+    [void]$body.Children.Add($g)
+}
+function New-Seg($options, $current) {
+    $sp = New-Object Windows.Controls.StackPanel
+    $sp.Orientation = 'Horizontal'
+    $group = [guid]::NewGuid().ToString()
+    $buttons = @()
+    foreach ($o in $options) {
+        $rb = New-Object Windows.Controls.RadioButton
+        $rb.Style = $window.FindResource('Seg')
+        $rb.GroupName = $group
+        $rb.Content = $o[0]
+        $rb.Tag = $o[1]
+        if ("$($o[1])" -eq "$current") { $rb.IsChecked = $true }
+        [void]$sp.Children.Add($rb)
+        $buttons += $rb
+    }
+    [pscustomobject]@{ Panel = $sp; Buttons = $buttons }
+}
+function Get-SegValue($seg) { foreach ($b in $seg.Buttons) { if ($b.IsChecked) { return $b.Tag } }; return $null }
+function Set-SegValue($seg, $v) { foreach ($b in $seg.Buttons) { if ("$($b.Tag)" -eq "$v") { $b.IsChecked = $true } } }
 
-# Window chrome
+$Status = W 'Status'
+function Set-Status($msg, $kind = 'info') {
+    $Status.Text = $msg
+    $Status.Foreground = B $(switch ($kind) { 'ok' { $C.Good } 'err' { $C.Bad } default { $C.Muted } })
+    $window.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render)
+}
+
+# ---------- Window chrome ----------
 (W 'TitleBar').Add_MouseLeftButtonDown({ $window.DragMove() })
 (W 'Logo').Add_MouseLeftButtonDown({ $window.DragMove() })
 (W 'BtnMin').Add_Click({ $window.WindowState = 'Minimized' })
 (W 'BtnClose').Add_Click({ $window.Close() })
 (W 'SideVer').Text = "Version $APP_VERSION"
 
-# Navigation
-$Pages = @{ NavBoost = 'PageBoost'; NavPing = 'PagePing'; NavTools = 'PageTools' }
-foreach ($nav in $Pages.Keys) {
-    (W $nav).Add_Checked({
-        param($s, $e)
-        foreach ($k in $Pages.Keys) { (W $Pages[$k]).Visibility = if ($k -eq $s.Name) { 'Visible' } else { 'Collapsed' } }
-    })
-}
-
-# Sidebar connection + Fortnite status
 function Get-ConnectionType {
     $up = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up'
     if (-not $up) { return 'none' }
     if ($up | Where-Object { $_.PhysicalMediaType -notmatch '802\.11|Wireless' }) { return 'wired' }
     return 'wifi'
 }
-$conn = Get-ConnectionType
-$SideConn = W 'SideConn'; $SideFn = W 'SideFn'
-switch ($conn) {
-    'wired' { $SideConn.Text = 'Ethernet'; $SideConn.Foreground = B '#4ADE80' }
-    'wifi'  { $SideConn.Text = 'Wi-Fi (use a cable for less lag)'; $SideConn.Foreground = B '#FBBF24' }
-    default { $SideConn.Text = 'No connection found'; $SideConn.Foreground = B '#8B93A7' }
+$script:Conn = Get-ConnectionType
+(W 'SideConn').Text = switch ($script:Conn) { 'wired' { 'Connected by cable' } 'wifi' { 'Connected by Wi-Fi' } default { 'Offline' } }
+
+# ---------- Pages + navigation ----------
+$PAGE_DEFS = @(
+    @{ Id = 'home';     Label = 'Home' }
+    @{ Id = 'tweaks';   Label = 'Tweaks' }
+    @{ Id = 'fortnite'; Label = 'Fortnite settings' }
+    @{ Id = 'ping';     Label = 'Server ping' }
+    @{ Id = 'startup';  Label = 'Startup apps' }
+    @{ Id = 'apps';     Label = 'Background apps' }
+    @{ Id = 'tools';    Label = 'Tools' }
+)
+$Pages = @{}; $Bodies = @{}; $NavButtons = @{}
+$PagesGrid = W 'Pages'
+foreach ($p in $PAGE_DEFS) {
+    $sv = New-Object Windows.Controls.ScrollViewer
+    $sv.VerticalScrollBarVisibility = 'Auto'
+    $sv.Visibility = 'Collapsed'
+    $body = New-Object Windows.Controls.StackPanel
+    $body.Margin = T 36 0 30 28
+    $body.MaxWidth = 980
+    $sv.Content = $body
+    [void]$PagesGrid.Children.Add($sv)
+    $Pages[$p.Id] = $sv; $Bodies[$p.Id] = $body
+
+    $nb = New-Object Windows.Controls.RadioButton
+    $nb.Style = $window.FindResource('Nav')
+    $nb.GroupName = 'nav'
+    $nb.Content = $p.Label
+    $nb.Tag = $p.Id
+    $nb.Add_Checked({ param($s, $e) Show-Page $s.Tag })
+    [void](W 'NavList').Children.Add($nb)
+    $NavButtons[$p.Id] = $nb
 }
-$SideFn.Text = if ($FN_PATH) { 'Fortnite install found' } else { 'Fortnite install not found' }
-
-function Set-Status($msg, $kind = 'info') {
-    $Status.Text = $msg
-    $color = switch ($kind) { 'ok' { '#4ADE80' } 'err' { '#F87171' } default { '#8B93A7' } }
-    $Status.Foreground = B $color
-    $window.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render)
-}
-
-function New-Text($text, $size, $color, $weight = 'Normal') {
-    $t = New-Object Windows.Controls.TextBlock
-    $t.Text = $text; $t.FontSize = $size; $t.Foreground = B $color
-    $t.FontWeight = [Windows.FontWeights]::$weight
-    $t
-}
-
-function New-Badge($text) {
-    $hex = $TagColors[$text]
-    $b = New-Object Windows.Controls.Border
-    $b.Background = B ('#26' + $hex.TrimStart('#'))
-    $b.CornerRadius = New-Object Windows.CornerRadius 5
-    $b.Padding = T 7 2 7 2
-    $b.Margin = T 0 0 6 0
-    $tb = New-Text $text.ToUpper() 10 $hex 'Bold'
-    $b.Child = $tb
-    $b
-}
-
-function New-Card {
-    $card = New-Object Windows.Controls.Border
-    $card.Background = B '#12151D'
-    $card.BorderBrush = B '#1C2030'
-    $card.BorderThickness = T 1 1 1 1
-    $card.CornerRadius = New-Object Windows.CornerRadius 12
-    $card.Padding = T 18 15 18 15
-    $card.Margin = T 0 0 0 10
-    $card
-}
-
-function Add-SectionHeader($panel, $text) {
-    $h = New-Text $text 11 '#6B7389' 'Bold'
-    $h.Margin = T 2 10 0 10
-    [void]$panel.Children.Add($h)
-}
-
-# ---------- Boost page ----------
-$script:Switches = @()
-
-function Update-Summary {
-    $on = @($script:Switches | Where-Object { $_.IsChecked }).Count
-    $total = @($script:Switches | Where-Object { $_.IsEnabled }).Count
-    (W 'ProgText').Text = "$on of $total tweaks active"
-    $pct = if ($total) { $on / $total } else { 0 }
-    (W 'ProgFill').Width = [math]::Max(0, 320 * $pct)
-}
-
-function Add-Card($t) {
-    $card = New-Card
-    $grid = New-Object Windows.Controls.Grid
-    $c1 = New-Object Windows.Controls.ColumnDefinition
-    $c1.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
-    $c2 = New-Object Windows.Controls.ColumnDefinition
-    $c2.Width = [Windows.GridLength]::Auto
-    $grid.ColumnDefinitions.Add($c1); $grid.ColumnDefinitions.Add($c2)
-
-    $sp = New-Object Windows.Controls.StackPanel
-    $sp.Margin = T 0 0 20 0
-    $head = New-Object Windows.Controls.WrapPanel
-    $title = New-Text $t.Name 15 '#FFFFFF' 'SemiBold'
-    $title.Margin = T 0 0 10 0
-    [void]$head.Children.Add($title)
-    foreach ($tag in $t.Tags) { $bd = New-Badge $tag; $bd.VerticalAlignment = 'Center'; [void]$head.Children.Add($bd) }
-    $desc = New-Text $t.Desc 12.5 '#8B93A7'
-    $desc.TextWrapping = 'Wrap'
-    $desc.Margin = T 0 6 0 0
-    $desc.LineHeight = 19
-    [void]$sp.Children.Add($head); [void]$sp.Children.Add($desc)
-
-    $cb = New-Object Windows.Controls.CheckBox
-    $cb.Style = $window.FindResource('Switch')
-    $cb.VerticalAlignment = 'Center'
-    $cb.Tag = $t
-    [Windows.Controls.Grid]::SetColumn($cb, 1)
-    $cb.Add_Click({
-        param($s, $e)
-        $t = $s.Tag
-        $want = [bool]$s.IsChecked
-        try {
-            if ($want) { & $t.On } else { & $t.Off }
-            $msg = "$($t.Name): " + $(if ($want) { 'ON' } else { 'OFF (reverted)' })
-            if ($t.Reboot) { $msg += ' - restart your PC for this one to kick in.' }
-            Set-Status $msg 'ok'
-        } catch {
-            Set-Status "$($t.Name) failed: $($_.Exception.Message)" 'err'
-        }
-        try { $s.IsChecked = [bool](& $t.Get) } catch { }
-        Update-Summary
-    })
-
-    [void]$grid.Children.Add($sp); [void]$grid.Children.Add($cb)
-    $card.Child = $grid
-    [void]$List.Children.Add($card)
-    $script:Switches += $cb
-}
-
-function Update-Switches {
-    foreach ($cb in $script:Switches) {
-        $t = $cb.Tag
-        $ok = $true
-        if ($t.Available) { $ok = [bool](& $t.Available) }
-        $cb.IsEnabled = $ok
-        try { $cb.IsChecked = [bool](& $t.Get) } catch { $cb.IsChecked = $false }
+$script:Built = @{}
+function Go-Page($id) { if ($NavButtons[$id].IsChecked) { Show-Page $id } else { $NavButtons[$id].IsChecked = $true } }
+function Show-Page($id) {
+    foreach ($k in $Pages.Keys) { $Pages[$k].Visibility = if ($k -eq $id) { 'Visible' } else { 'Collapsed' } }
+    $Pages[$id].ScrollToTop()
+    $always = @('home', 'apps', 'startup', 'fortnite')
+    if (-not $script:Built[$id] -or ($always -contains $id)) {
+        $window.Cursor = [Windows.Input.Cursors]::Wait
+        try { & "Build-$id" } catch { Set-Status "Couldn't load this page: $($_.Exception.Message)" 'err' }
+        $window.Cursor = $null
+        $script:Built[$id] = $true
     }
-    Update-Summary
 }
 
-Add-SectionHeader $List 'FPS + SMOOTHNESS'
-foreach ($t in $Tweaks) {
-    if ($t.PSObject.Properties['Section'] -and $t.Section) { Add-SectionHeader $List $t.Section }
-    Add-Card $t
+# ---------- System info (read once) ----------
+function Get-Specs {
+    $s = @{}
+    try {
+        $cpu = Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
+        $s.Cpu = ($cpu.Name -replace '\s+', ' ').Trim()
+        $s.CpuSub = "$($cpu.NumberOfCores) cores, $($cpu.NumberOfLogicalProcessors) threads"
+    } catch { $s.Cpu = 'Unknown' }
+    try {
+        $gpus = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -notmatch 'Basic|Virtual|Remote|Parsec|Meta' } | ForEach-Object { $_.Name.Trim() })
+        $s.Gpu = if ($gpus.Count) { $gpus -join "`n" } else { 'Unknown' }
+    } catch { $s.Gpu = 'Unknown' }
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+        $sticks = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue)
+        $speed = ($sticks | Measure-Object ConfiguredClockSpeed -Maximum).Maximum
+        $s.Ram = '{0} GB' -f [math]::Round($cs.TotalPhysicalMemory / 1GB)
+        $s.RamSub = if ($sticks.Count) { "$($sticks.Count) stick$(if ($sticks.Count -ne 1) { 's' }) at $speed MT/s" } else { '' }
+    } catch { $s.Ram = 'Unknown' }
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $s.Os = ($os.Caption -replace 'Microsoft ', '').Trim()
+        $s.OsSub = "Build $($os.BuildNumber)"
+    } catch { $s.Os = 'Windows' }
+    try { $s.Battery = [bool](Get-CimInstance Win32_Battery -ErrorAction Stop) } catch { $s.Battery = $false }
+    $s
 }
-Update-Switches
+$script:Specs = Get-Specs
 
-(W 'BtnAll').Add_Click({
-    $r = [Windows.MessageBox]::Show("Turn on every tweak?`n`nTip: make a restore point first (Tools page) if you haven't.", "vzc1's optimizations", 'YesNo', 'Question')
-    if ($r -ne 'Yes') { return }
+# ---------- Tweaks page ----------
+$script:Switches = @()
+function Get-TweakState($t) {
+    $ok = $true
+    if ($t.Available) { $ok = [bool](& $t.Available) }
+    $on = $false
+    if ($ok) { try { $on = [bool](& $t.Get) } catch { } }
+    @{ Available = $ok; On = $on }
+}
+function Get-TweakCounts {
+    $on = 0; $total = 0
+    foreach ($t in $Tweaks) { $s = Get-TweakState $t; if ($s.Available) { $total++; if ($s.On) { $on++ } } }
+    @{ On = $on; Total = $total }
+}
+function Enable-AllTweaks {
     $fails = @(); $reboot = $false
-    foreach ($cb in $script:Switches) {
-        if (-not $cb.IsEnabled -or $cb.IsChecked) { continue }
-        $t = $cb.Tag
-        Set-Status "Applying: $($t.Name)..."
+    foreach ($t in $Tweaks) {
+        $s = Get-TweakState $t
+        if (-not $s.Available -or $s.On) { continue }
+        Set-Status "Turning on: $($t.Name)..."
         try { & $t.On; if ($t.Reboot) { $reboot = $true } } catch { $fails += $t.Name }
     }
-    Update-Switches
-    if ($fails.Count) { Set-Status ("Done, but these failed: " + ($fails -join ', ')) 'err' }
-    elseif ($reboot) { Set-Status 'Everything is on. Restart your PC so GPU scheduling kicks in.' 'ok' }
-    else { Set-Status 'Everything is on.' 'ok' }
-})
-
-# ---------- Ping page ----------
-function Ping-Color($ms) {
-    if ($null -eq $ms) { return '#4B5263' }
-    if ($ms -lt 30) { return '#4ADE80' }
-    if ($ms -lt 60) { return '#A3E635' }
-    if ($ms -lt 100) { return '#FBBF24' }
-    if ($ms -lt 150) { return '#FB923C' }
-    return '#F87171'
+    if ($fails.Count) { Set-Status ("Turned on everything except: " + ($fails -join ', ')) 'err' }
+    elseif ($reboot) { Set-Status 'All tweaks on. Restart your PC so GPU scheduling takes effect.' 'ok' }
+    else { Set-Status 'All tweaks on.' 'ok' }
+}
+function Update-TweakSummary {
+    if ($script:TweakSummary) {
+        $c = Get-TweakCounts
+        $script:TweakSummary.Text = "$($c.On) of $($c.Total) on"
+    }
 }
 
+function Build-tweaks {
+    $body = $Bodies['tweaks']; $body.Children.Clear()
+    $right = New-Object Windows.Controls.StackPanel
+    $right.Orientation = 'Horizontal'
+    $script:TweakSummary = New-Text '' 15 $C.Muted -Head
+    $script:TweakSummary.VerticalAlignment = 'Center'; $script:TweakSummary.Margin = T 0 0 16 0
+    [void]$right.Children.Add($script:TweakSummary)
+    [void]$right.Children.Add((New-Button 'Turn on all' -Primary {
+        Enable-AllTweaks
+        $script:Built['tweaks'] = $false; Show-Page 'tweaks'
+    }))
+    Add-PageHeader $body 'Tweaks' 'Windows settings that help Fortnite run smoother. Switch any of them off again to undo it.' $right
+
+    foreach ($grp in @('Performance', 'Network', 'Mouse and keyboard')) {
+        Add-Heading $body $grp
+        $panel = New-Panel
+        foreach ($t in ($Tweaks | Where-Object { $_.Group -eq $grp })) {
+            $st = Get-TweakState $t
+            $sw = New-Switch $st.On
+            $sw.IsEnabled = $st.Available
+            $sw.Tag = $t
+            $sw.Add_Click({
+                param($s, $e)
+                $t = $s.Tag
+                $want = [bool]$s.IsChecked
+                try {
+                    if ($want) { & $t.On } else { & $t.Off }
+                    $msg = "$($t.Name) " + $(if ($want) { 'on.' } else { 'off.' })
+                    if ($t.Reboot) { $msg += ' Restart your PC for it to take effect.' }
+                    Set-Status $msg 'ok'
+                } catch { Set-Status "$($t.Name) didn't change: $($_.Exception.Message)" 'err' }
+                try { $s.IsChecked = [bool](& $t.Get) } catch { }
+                Update-TweakSummary
+            })
+            $desc = $t.Desc
+            if (-not $st.Available) {
+                $desc += $(if ($t.Id -eq 'gpu') { ' Fortnite install not found.' } else { ' Not available on this PC.' })
+            }
+            Add-PanelItem $panel (New-Row $t.Name $desc $sw)
+        }
+        [void]$body.Children.Add($panel)
+    }
+    Update-TweakSummary
+}
+
+# ---------- Home page ----------
+function Get-Checks {
+    $checks = @()
+
+    $ri = $null; try { $ri = [Vz.Native]::RefreshInfo() } catch { }
+    if ($ri) {
+        $w = $ri[0]; $h = $ri[1]; $cur = $ri[2]; $max = $ri[3]
+        $script:MonitorHz = $max
+        if ($cur -lt $max) {
+            $checks += @{ State = 'bad'; Title = "Your monitor is running at $cur Hz"
+                Detail = "It supports $max Hz. Windows often leaves new monitors on 60 Hz. Higher means smoother aim and less delay."
+                Action = "Switch to $max Hz"; Do = {
+                    $r = [Vz.Native]::SetRefresh($script:MonitorHz)
+                    if ($r -eq 0) { Set-Status "Monitor switched to $($script:MonitorHz) Hz." 'ok' } else { Set-Status "Windows didn't accept $($script:MonitorHz) Hz (code $r). Try it in Settings > Display > Advanced display." 'err' }
+                } }
+        } else {
+            $checks += @{ State = 'good'; Title = "Monitor at its max refresh rate"; Detail = "$cur Hz at $w x $h." }
+        }
+    }
+
+    $powerTweak = $Tweaks | Where-Object { $_.Id -eq 'power' }
+    $onBattery = $false
+    if ($script:Specs.Battery) { try { $onBattery = [bool](Get-CimInstance Win32_Battery | Where-Object { $_.BatteryStatus -eq 1 }) } catch { } }
+    if ($onBattery) {
+        $checks += @{ State = 'bad'; Title = 'Running on battery'; Detail = 'Laptops cut performance hard on battery. Plug in your charger before you play.' }
+    } elseif (-not (Get-TweakState $powerTweak).On) {
+        $checks += @{ State = 'warn'; Title = "Power plan isn't on max performance"; Detail = 'Your CPU slows down between frames to save power, which shows up as FPS dips.'
+            Action = 'Turn on'; Do = { try { & ($Tweaks | Where-Object { $_.Id -eq 'power' }).On; Set-Status 'Max performance power plan on.' 'ok' } catch { Set-Status $_.Exception.Message 'err' } } }
+    } else {
+        $checks += @{ State = 'good'; Title = 'Max performance power plan'; Detail = 'Your CPU stays at full speed.' }
+    }
+
+    $tc = Get-TweakCounts
+    if ($tc.On -lt $tc.Total) {
+        $checks += @{ State = 'warn'; Title = "$($tc.On) of $($tc.Total) tweaks on"; Detail = 'Game DVR, mouse acceleration, network power saving and more.'
+            Action = 'Turn on all'; Do = { Enable-AllTweaks } }
+    } else {
+        $checks += @{ State = 'good'; Title = 'All tweaks on'; Detail = "$($tc.Total) of $($tc.Total)." }
+    }
+
+    $lines = $null; try { $lines = Get-IniLines } catch { }
+    if ($lines) {
+        $issues = @()
+        if ((Get-IniValue $lines $FN_SEC 'bUseVSync') -eq 'True') { $issues += 'V-Sync is on' }
+        if ((Get-IniValue $lines $FN_SEC 'bMotionBlur') -eq 'True') { $issues += 'motion blur is on' }
+        if ((Get-IniValue $lines $FN_SEC 'FullscreenMode') -eq '2') { $issues += 'running windowed' }
+        $cap = 0; try { $cap = [int][double](Get-IniValue $lines $FN_SEC 'FrameRateLimit') } catch { }
+        if ($cap -gt 0 -and $script:MonitorHz -and $cap -lt $script:MonitorHz) { $issues += "FPS is capped at $cap, below your $($script:MonitorHz) Hz monitor" }
+        if ($issues.Count) {
+            $txt = ($issues -join ', ')
+            $checks += @{ State = 'warn'; Title = 'Fortnite settings are holding you back'; Detail = $txt.Substring(0, 1).ToUpper() + $txt.Substring(1) + '.'
+                Action = 'Fix'; Do = { Go-Page 'fortnite' }; NoRefresh = $true }
+        } else {
+            $checks += @{ State = 'good'; Title = 'Fortnite settings look good'; Detail = 'No V-Sync, no motion blur, FPS cap fits your monitor.' }
+        }
+    } else {
+        $checks += @{ State = 'warn'; Title = "Fortnite's settings file wasn't found"; Detail = 'Open Fortnite once so it creates it, then come back.' }
+    }
+
+    switch ($script:Conn) {
+        'wired' { $checks += @{ State = 'good'; Title = 'Connected by cable'; Detail = 'The lowest lag you can get from your connection.' } }
+        'wifi'  { $checks += @{ State = 'warn'; Title = 'Connected by Wi-Fi'; Detail = 'Wi-Fi causes most lag spikes and packet loss. An Ethernet cable fixes them.' } }
+        default { $checks += @{ State = 'bad'; Title = 'No internet connection found'; Detail = 'Check your cable or Wi-Fi.' } }
+    }
+
+    $apps = @(Get-HeavyApps)
+    $sum = ($apps | Measure-Object Bytes -Sum).Sum
+    if ($sum -gt 1.5GB) {
+        $names = ($apps | Select-Object -First 3 | ForEach-Object { $_.Label }) -join ', '
+        $checks += @{ State = 'warn'; Title = "Background apps are using $(Format-Bytes $sum) of memory"; Detail = "Biggest: $names."
+            Action = 'Review'; Do = { Go-Page 'apps' }; NoRefresh = $true }
+    } else {
+        $checks += @{ State = 'good'; Title = 'Background apps are light'; Detail = "$(Format-Bytes $sum) in use by other apps." }
+    }
+    $checks
+}
+
+function Build-home {
+    $body = $Bodies['home']; $body.Children.Clear()
+    $checks = @(Get-Checks)
+    $good = @($checks | Where-Object { $_.State -eq 'good' }).Count
+
+    $score = New-Object Windows.Controls.StackPanel
+    $score.Orientation = 'Horizontal'
+    $big = New-Text "$good/$($checks.Count)" 54 $(if ($good -eq $checks.Count) { $C.Good } else { $C.Accent }) 'Bold' -Head
+    $big.Margin = T 0 0 0 -8
+    [void]$score.Children.Add($big)
+    $sub = $(if ($good -eq $checks.Count) { "You're set. Go play." } elseif ($checks.Count - $good -eq 1) { '1 thing to fix before you play.' } else { "$($checks.Count - $good) things to fix before you play." })
+    Add-PageHeader $body 'Ready to play?' $sub $score
+
+    $grid = New-Object Windows.Controls.Grid
+    $c1 = New-Object Windows.Controls.ColumnDefinition; $c1.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
+    $c2 = New-Object Windows.Controls.ColumnDefinition; $c2.Width = New-Object Windows.GridLength 290
+    $grid.ColumnDefinitions.Add($c1); $grid.ColumnDefinitions.Add($c2)
+
+    $panel = New-Panel
+    $panel.Margin = T 0 0 18 0
+    $panel.VerticalAlignment = 'Top'
+    $order = @{ bad = 0; warn = 1; good = 2 }
+    foreach ($ck in ($checks | Sort-Object { $order[$_.State] })) {
+        $color = switch ($ck.State) { 'good' { $C.Good } 'warn' { $C.Warn } default { $C.Bad } }
+        $btn = $null
+        if ($ck.Action) {
+            $btn = New-Button $ck.Action -Primary:($ck.State -eq 'bad') {
+                param($s, $e)
+                & $s.Tag.Do
+                if (-not $s.Tag.NoRefresh) { Show-Page 'home' }
+            }
+            $btn.Tag = @{ Do = $ck.Do; NoRefresh = [bool]$ck.NoRefresh }
+        }
+        Add-PanelItem $panel (New-Row $ck.Title $ck.Detail $btn (New-Dot $color))
+    }
+    [void]$grid.Children.Add($panel)
+
+    $specs = New-Panel
+    $specs.VerticalAlignment = 'Top'
+    [Windows.Controls.Grid]::SetColumn($specs, 1)
+    $sp = $script:Specs
+    $disp = ''
+    try { $ri = [Vz.Native]::RefreshInfo(); if ($ri) { $disp = "$($ri[0]) x $($ri[1])"; $dispSub = "$($ri[2]) Hz now, up to $($ri[3]) Hz" } } catch { }
+    $rows = @(
+        @('Processor', $sp.Cpu, $sp.CpuSub), @('Graphics', $sp.Gpu, ''), @('Memory', $sp.Ram, $sp.RamSub),
+        @('Display', $disp, $dispSub), @('Windows', $sp.Os, $sp.OsSub),
+        @('Fortnite', $(if ($FN_PATH) { 'Installed' } else { 'Not found' }), $(if (Test-FortniteRunning) { 'Running right now' } else { '' }))
+    )
+    foreach ($r in $rows) {
+        $st = New-Object Windows.Controls.StackPanel
+        $st.Margin = T 18 11 18 11
+        [void]$st.Children.Add((New-Text $r[0] 12 $C.Dim))
+        $v = New-Text $r[1] 14 $C.Text 'SemiBold' -Wrap; $v.Margin = T 0 2 0 0
+        [void]$st.Children.Add($v)
+        if ($r[2]) { [void]$st.Children.Add((New-Text $r[2] 12 $C.Muted -Wrap)) }
+        Add-PanelItem $specs $st
+    }
+    [void]$grid.Children.Add($specs)
+    [void]$body.Children.Add($grid)
+}
+
+# ---------- Fortnite settings page ----------
+function Build-fortnite {
+    $body = $Bodies['fortnite']; $body.Children.Clear()
+    Add-PageHeader $body 'Fortnite settings' "Changes Fortnite's own settings file. Close Fortnite first, because it rewrites the file when it exits. Your original file is backed up the first time you apply."
+
+    $lines = $null; try { $lines = Get-IniLines } catch { }
+    if (-not $lines) {
+        $panel = New-Panel
+        Add-PanelItem $panel (New-Row "Fortnite's settings file wasn't found" "Open Fortnite once and close it again, so it creates the file. It lives at $FN_INI." (New-Button 'Check again' { Show-Page 'fortnite' }))
+        [void]$body.Children.Add($panel)
+        return
+    }
+    $g = { param($k) Get-IniValue $lines $FN_SEC $k }
+
+    $fl = Get-IniValue $lines 'D3DRHIPreference' 'PreferredFeatureLevel'
+    $rhi = Get-IniValue $lines 'D3DRHIPreference' 'PreferredRHI'
+    $mode = if ($fl -eq 'es31') { 'perf' } elseif ($rhi -eq 'dx12') { 'dx12' } else { 'dx11' }
+    $cap = 0; try { $cap = [int][double](& $g 'FrameRateLimit') } catch { }
+    $hz = if ($script:MonitorHz) { $script:MonitorHz } else { try { ([Vz.Native]::RefreshInfo())[3] } catch { 0 } }
+    $capVals = @(60, 120, 144, 165, 240, 360)
+    if ($hz -and ($capVals -notcontains $hz)) { $capVals += $hz }
+    if ($cap -gt 0 -and ($capVals -notcontains $cap)) { $capVals += $cap }
+    $capOpts = @($capVals | Sort-Object | ForEach-Object { , @("$_", $_) }) + , @('Unlimited', 0)
+
+    $script:Fn = @{
+        Mode = New-Seg @(@('Performance', 'perf'), @('DirectX 11', 'dx11'), @('DirectX 12', 'dx12')) $mode
+        Cap  = New-Seg $capOpts $cap
+        Win  = New-Seg @(@('Fullscreen', '0'), @('Windowed fullscreen', '1'), @('Windowed', '2')) (& $g 'FullscreenMode')
+        Reflex = New-Seg @(@('Off', '0'), @('On', '1'), @('On + Boost', '2')) (& $g 'LatencyTweak2')
+        VSync = New-Switch ((& $g 'bUseVSync') -ne 'True')
+        Blur  = New-Switch ((& $g 'bMotionBlur') -ne 'True')
+        Grass = New-Switch ((& $g 'bShowGrass') -eq 'False')
+        Shadows = New-Switch ((Get-IniValue $lines 'ScalabilityGroups' 'sg.ShadowQuality') -eq '0')
+        Nanite = New-Switch ((& $g 'bUseNanite') -ne 'True')
+        RT = New-Switch ((& $g 'bRayTracing') -ne 'True')
+        Fps = New-Switch ((& $g 'bShowFPS') -eq 'True')
+    }
+    $F = $script:Fn
+
+    Add-Heading $body 'Display'
+    $p1 = New-Panel
+    Add-PanelItem $p1 (New-Row 'Rendering mode' 'Performance mode is the biggest FPS boost on low and mid-range PCs. It lowers how the game looks. DirectX 12 is needed for Nanite and ray tracing.' $F.Mode.Panel)
+    $hzText = if ($hz) { "your monitor's $hz Hz" } else { "your monitor's refresh rate" }
+    Add-PanelItem $p1 (New-Row 'Frame rate limit' "Set it to $hzText or a little higher. Unlimited can make frame times uneven." $F.Cap.Panel)
+    Add-PanelItem $p1 (New-Row 'Window mode' 'Fullscreen has the lowest input delay.' $F.Win.Panel)
+    Add-PanelItem $p1 (New-Row 'NVIDIA Reflex' 'Cuts input delay. Only does something on NVIDIA graphics cards.' $F.Reflex.Panel)
+    [void]$body.Children.Add($p1)
+
+    Add-Heading $body 'Visuals'
+    $p2 = New-Panel
+    Add-PanelItem $p2 (New-Row 'V-Sync off' 'V-Sync adds a lot of input delay.' $F.VSync)
+    Add-PanelItem $p2 (New-Row 'Motion blur off' 'Blur makes it harder to track players when you turn.' $F.Blur)
+    Add-PanelItem $p2 (New-Row 'Shadows off' 'One of the biggest FPS costs, and enemies are easier to spot without them.' $F.Shadows)
+    Add-PanelItem $p2 (New-Row 'Grass off' 'Less to draw, and players lying in grass are easier to see.' $F.Grass)
+    Add-PanelItem $p2 (New-Row 'Nanite off' 'High-detail geometry. Looks nice, costs a lot of FPS.' $F.Nanite)
+    Add-PanelItem $p2 (New-Row 'Ray tracing off' 'Costs a huge amount of FPS for lighting you will not notice mid-fight.' $F.RT)
+    Add-PanelItem $p2 (New-Row 'Show FPS counter' 'Shows your FPS in the corner of the screen during a match.' $F.Fps)
+    [void]$body.Children.Add($p2)
+
+    $bar = New-Object Windows.Controls.StackPanel
+    $bar.Orientation = 'Horizontal'
+    $apply = New-Button 'Apply to Fortnite' -Primary { Save-FortniteSettings }
+    $rec = New-Button 'Use recommended' { Set-FortniteRecommended }
+    $rec.Margin = T 10 0 0 0
+    $restore = New-Button 'Restore my original file' {
+        if (Test-FortniteRunning) { Set-Status 'Close Fortnite first.' 'err'; return }
+        Copy-Item -LiteralPath $FN_INI_ORIG -Destination $FN_INI -Force
+        Set-Status 'Your original Fortnite settings are back.' 'ok'
+        Show-Page 'fortnite'
+    }
+    $restore.Margin = T 10 0 0 0
+    $restore.IsEnabled = Test-Path -LiteralPath $FN_INI_ORIG
+    [void]$bar.Children.Add($apply); [void]$bar.Children.Add($rec); [void]$bar.Children.Add($restore)
+    [void]$body.Children.Add($bar)
+}
+
+function Set-FortniteRecommended {
+    $F = $script:Fn
+    $hz = $script:MonitorHz
+    if ($hz) {
+        $best = ($F.Cap.Buttons | Where-Object { $_.Tag -ge $hz } | Sort-Object { $_.Tag } | Select-Object -First 1)
+        if ($best) { $best.IsChecked = $true }
+    }
+    Set-SegValue $F.Win '0'
+    Set-SegValue $F.Reflex '2'
+    foreach ($k in 'VSync', 'Blur', 'Shadows', 'Grass', 'Nanite', 'RT', 'Fps') { $F[$k].IsChecked = $true }
+    Set-Status "Recommended settings picked. Rendering mode is left as you had it. Press Apply to Fortnite to save them."
+}
+
+function Save-FortniteSettings {
+    if (Test-FortniteRunning) { Set-Status 'Close Fortnite first. It rewrites its settings file when it exits.' 'err'; return }
+    $F = $script:Fn
+    try {
+        $lines = Get-IniLines
+        switch (Get-SegValue $F.Mode) {
+            'perf' { Set-IniValue $lines 'D3DRHIPreference' 'PreferredRHI' 'dx11'; Set-IniValue $lines 'D3DRHIPreference' 'PreferredFeatureLevel' 'es31' }
+            'dx11' { Set-IniValue $lines 'D3DRHIPreference' 'PreferredRHI' 'dx11'; Set-IniValue $lines 'D3DRHIPreference' 'PreferredFeatureLevel' 'sm5' }
+            'dx12' { Set-IniValue $lines 'D3DRHIPreference' 'PreferredRHI' 'dx12'; Set-IniValue $lines 'D3DRHIPreference' 'PreferredFeatureLevel' 'sm6' }
+        }
+        $cap = Get-SegValue $F.Cap
+        if ($null -ne $cap) { Set-IniValue $lines $FN_SEC 'FrameRateLimit' ('{0}.000000' -f [int]$cap) }
+        $win = Get-SegValue $F.Win
+        if ($null -ne $win) { foreach ($k in 'FullscreenMode', 'LastConfirmedFullscreenMode', 'PreferredFullscreenMode') { Set-IniValue $lines $FN_SEC $k $win } }
+        $rf = Get-SegValue $F.Reflex
+        if ($null -ne $rf) { Set-IniValue $lines $FN_SEC 'LatencyTweak2' $rf }
+        $tf = { param($v) if ($v) { 'True' } else { 'False' } }
+        Set-IniValue $lines $FN_SEC 'bUseVSync' (& $tf (-not $F.VSync.IsChecked))
+        Set-IniValue $lines $FN_SEC 'bMotionBlur' (& $tf (-not $F.Blur.IsChecked))
+        Set-IniValue $lines $FN_SEC 'bShowGrass' (& $tf (-not $F.Grass.IsChecked))
+        Set-IniValue $lines $FN_SEC 'bUseNanite' (& $tf (-not $F.Nanite.IsChecked))
+        Set-IniValue $lines $FN_SEC 'bRayTracing' (& $tf (-not $F.RT.IsChecked))
+        Set-IniValue $lines $FN_SEC 'bShowFPS' (& $tf ([bool]$F.Fps.IsChecked))
+        if ($F.Shadows.IsChecked) { Set-IniValue $lines 'ScalabilityGroups' 'sg.ShadowQuality' '0' }
+        if ($F.RT.IsChecked) { Set-IniValue $lines 'RayTracing' 'r.RayTracing.EnableInGame' 'False' }
+        Save-IniLines $lines
+        Set-Status 'Saved. Your new settings load the next time you start Fortnite.' 'ok'
+        $script:Built['fortnite'] = $false
+    } catch { Set-Status "Couldn't save Fortnite settings: $($_.Exception.Message)" 'err' }
+}
+
+# ---------- Server ping page ----------
+function Ping-Color($ms) {
+    if ($null -eq $ms) { return $C.Dim }
+    if ($ms -lt 35) { return $C.Good }
+    if ($ms -lt 70) { return '#B5D86A' }
+    if ($ms -lt 110) { return $C.Warn }
+    return $C.Bad
+}
 $script:PingRows = @()
 $script:PingBuilt = $false
 $script:Runspace = $null
 $SPARK_N = 30
+$PING_COLS = @(-1, 120, 128, 70, 76, 60)
+
+function New-PingGrid {
+    $g = New-Object Windows.Controls.Grid
+    foreach ($w in $PING_COLS) {
+        $cd = New-Object Windows.Controls.ColumnDefinition
+        $cd.Width = if ($w -lt 0) { New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star) } else { New-Object Windows.GridLength $w }
+        $g.ColumnDefinitions.Add($cd)
+    }
+    $g
+}
+function Add-Cell($grid, $el, $col, $align = 'Left') {
+    $el.HorizontalAlignment = $align; $el.VerticalAlignment = 'Center'
+    [Windows.Controls.Grid]::SetColumn($el, $col)
+    [void]$grid.Children.Add($el)
+}
+
+function Build-ping {
+    $body = $Bodies['ping']; $body.Children.Clear()
+    $script:BtnPing = New-Button $(if ($sync.Running) { 'Stop' } else { 'Start test' }) -Primary:(-not $sync.Running) { Toggle-Ping }
+    $script:BtnPing.MinWidth = 120
+    Add-PageHeader $body 'Server ping' "Live ping to every Fortnite datacenter, through Epic's own matchmaking ping servers. Fortnite puts you on the best datacenter inside the region you pick." $script:BtnPing
+
+    $best = New-Panel
+    $bg = New-Object Windows.Controls.Grid
+    $bg.Margin = T 20 16 20 16
+    $b1 = New-Object Windows.Controls.ColumnDefinition; $b1.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
+    $b2 = New-Object Windows.Controls.ColumnDefinition; $b2.Width = [Windows.GridLength]::Auto
+    $bg.ColumnDefinitions.Add($b1); $bg.ColumnDefinitions.Add($b2)
+    $bl = New-Object Windows.Controls.StackPanel
+    $bl.VerticalAlignment = 'Center'
+    $script:HeroCity = New-Text 'Press Start test' 24 $C.Text 'SemiBold' -Head
+    $script:HeroTip = New-Text 'Pings every datacenter at once. Give it about ten seconds to settle.' 13 $C.Muted -Wrap
+    $script:HeroTip.MaxWidth = 560; $script:HeroTip.HorizontalAlignment = 'Left'
+    [void]$bl.Children.Add($script:HeroCity); [void]$bl.Children.Add($script:HeroTip)
+    $script:HeroMs = New-Text '' 46 $C.Text 'Bold' -Head
+    $script:HeroMs.VerticalAlignment = 'Center'
+    [Windows.Controls.Grid]::SetColumn($script:HeroMs, 1)
+    [void]$bg.Children.Add($bl); [void]$bg.Children.Add($script:HeroMs)
+    $best.Child.Children.Add($bg) | Out-Null
+    [void]$body.Children.Add($best)
+
+    $script:PingTable = New-Panel
+    [void]$body.Children.Add($script:PingTable)
+    $script:PingBuilt = $false
+    if ($sync.State -eq 'ready') { Build-PingRows } else {
+        Add-PanelItem $script:PingTable (New-Row 'No results yet' 'Press Start test. The first run takes a few seconds to find every server.' $null)
+    }
+}
 
 function Build-PingRows {
-    $PingList.Children.Clear()
+    $tbl = $script:PingTable
+    $tbl.Child.Children.Clear()
     $script:PingRows = @()
+
+    $hdr = New-PingGrid
+    $hdr.Margin = T 18 10 18 10
+    $i = 0
+    foreach ($h in @('Datacenter', 'Region', 'Last 30', 'Ping', 'Jitter', 'Loss')) {
+        Add-Cell $hdr (New-Text $h 12 $C.Dim) $i $(if ($i -ge 3) { 'Right' } else { 'Left' })
+        $i++
+    }
+    Add-PanelItem $tbl $hdr
+
     foreach ($r in $PING_REGIONS) {
-        $dcs = @($sync.DCs | Where-Object { $_.Region -eq $r.Code })
-        if (-not $dcs.Count) { continue }
-
-        $card = New-Card
-        $card.Padding = T 0 0 0 4
-        $stack = New-Object Windows.Controls.StackPanel
-
-        $hdr = New-Object Windows.Controls.Grid
-        $hdr.Margin = T 20 14 20 8
-        $hc1 = New-Object Windows.Controls.ColumnDefinition; $hc1.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
-        $hc2 = New-Object Windows.Controls.ColumnDefinition; $hc2.Width = [Windows.GridLength]::Auto
-        $hdr.ColumnDefinitions.Add($hc1); $hdr.ColumnDefinitions.Add($hc2)
-        $hl = New-Object Windows.Controls.StackPanel; $hl.Orientation = 'Horizontal'
-        $rn = New-Text $r.Name.ToUpper() 12 '#FFFFFF' 'Bold'
-        [void]$hl.Children.Add($rn)
-        $cnt = New-Text ("   {0} datacenter{1}" -f $dcs.Count, $(if ($dcs.Count -gt 1) { 's' } else { '' })) 12 '#6B7389'
-        [void]$hl.Children.Add($cnt)
-        $regionBest = New-Text '' 12 '#8B93A7' 'SemiBold'
-        [Windows.Controls.Grid]::SetColumn($regionBest, 1)
-        [void]$hdr.Children.Add($hl); [void]$hdr.Children.Add($regionBest)
-        [void]$stack.Children.Add($hdr)
-
-        foreach ($dc in $dcs) {
-            $row = New-Object Windows.Controls.Grid
-            $row.Margin = T 20 8 20 10
-            foreach ($w in @(18, -1, 140, 92, 120)) {
-                $cd = New-Object Windows.Controls.ColumnDefinition
-                $cd.Width = if ($w -lt 0) { New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star) } else { New-Object Windows.GridLength $w }
-                $row.ColumnDefinitions.Add($cd)
-            }
-
-            $dot = New-Object Windows.Shapes.Ellipse
-            $dot.Width = 8; $dot.Height = 8; $dot.Fill = B '#4B5263'; $dot.VerticalAlignment = 'Center'; $dot.HorizontalAlignment = 'Left'
-            [void]$row.Children.Add($dot)
+        foreach ($dc in @($sync.DCs | Where-Object { $_.Region -eq $r.Code })) {
+            $row = New-PingGrid
+            $row.Margin = T 18 9 18 9
 
             $name = New-Object Windows.Controls.StackPanel
-            $name.VerticalAlignment = 'Center'
-            [Windows.Controls.Grid]::SetColumn($name, 1)
-            [void]$name.Children.Add((New-Text $dc.City 14 '#FFFFFF' 'SemiBold'))
-            $sub = if ($dc.Nbg -eq 'unknown') { "$($dc.Ips.Count) servers" } else { "$($dc.Nbg)  -  $($dc.Ips.Count) servers" }
-            [void]$name.Children.Add((New-Text $sub 11 '#6B7389'))
-            [void]$row.Children.Add($name)
+            $name.Orientation = 'Horizontal'
+            $dot = New-Dot $C.Dim; $dot.Margin = T 0 0 10 0; $dot.VerticalAlignment = 'Center'
+            [void]$name.Children.Add($dot)
+            [void]$name.Children.Add((New-Text $dc.City 14 $C.Text 'SemiBold'))
+            Add-Cell $row $name 0
+            Add-Cell $row (New-Text $r.Name 13 $C.Muted) 1
 
             $spark = New-Object Windows.Controls.Canvas
-            $spark.Width = 120; $spark.Height = 26; $spark.VerticalAlignment = 'Center'; $spark.HorizontalAlignment = 'Left'
-            $spark.ClipToBounds = $true
-            [Windows.Controls.Grid]::SetColumn($spark, 2)
+            $spark.Width = 120; $spark.Height = 20; $spark.ClipToBounds = $true
             $bars = @()
-            for ($i = 0; $i -lt $SPARK_N; $i++) {
+            for ($k = 0; $k -lt $SPARK_N; $k++) {
                 $rc = New-Object Windows.Shapes.Rectangle
-                $rc.Width = 3; $rc.Height = 2; $rc.RadiusX = 1; $rc.RadiusY = 1; $rc.Fill = B '#1E2230'
-                [Windows.Controls.Canvas]::SetLeft($rc, $i * 4)
-                [Windows.Controls.Canvas]::SetTop($rc, 24)
+                $rc.Width = 3; $rc.Height = 2; $rc.Fill = B $C.Line
+                [Windows.Controls.Canvas]::SetLeft($rc, $k * 4)
+                [Windows.Controls.Canvas]::SetTop($rc, 18)
                 [void]$spark.Children.Add($rc)
                 $bars += $rc
             }
-            [void]$row.Children.Add($spark)
+            Add-Cell $row $spark 2
 
-            $msPanel = New-Object Windows.Controls.StackPanel
-            $msPanel.Orientation = 'Horizontal'; $msPanel.HorizontalAlignment = 'Right'; $msPanel.VerticalAlignment = 'Center'
-            [Windows.Controls.Grid]::SetColumn($msPanel, 3)
-            $msText = New-Text '--' 24 '#4B5263' 'Bold'
-            $msUnit = New-Text 'ms' 12 '#6B7389' 'SemiBold'
-            $msUnit.VerticalAlignment = 'Bottom'; $msUnit.Margin = T 4 0 0 5
-            [void]$msPanel.Children.Add($msText); [void]$msPanel.Children.Add($msUnit)
-            [void]$row.Children.Add($msPanel)
+            $ms = New-Text '--' 18 $C.Dim 'SemiBold' -Head
+            Add-Cell $row $ms 3 'Right'
+            $jit = New-Text '--' 13 $C.Muted
+            Add-Cell $row $jit 4 'Right'
+            $loss = New-Text '--' 13 $C.Muted
+            Add-Cell $row $loss 5 'Right'
 
-            $stats = New-Object Windows.Controls.StackPanel
-            $stats.HorizontalAlignment = 'Right'; $stats.VerticalAlignment = 'Center'
-            [Windows.Controls.Grid]::SetColumn($stats, 4)
-            $jit = New-Text 'jitter --' 11 '#8B93A7'; $jit.HorizontalAlignment = 'Right'
-            $loss = New-Text 'loss --' 11 '#8B93A7'; $loss.HorizontalAlignment = 'Right'
-            [void]$stats.Children.Add($jit); [void]$stats.Children.Add($loss)
-            [void]$row.Children.Add($stats)
-
-            $sep = New-Object Windows.Controls.Border
-            $sep.Height = 1; $sep.Background = B '#181C27'; $sep.Margin = T 20 0 20 0
-            [void]$stack.Children.Add($sep)
-            [void]$stack.Children.Add($row)
-
-            $script:PingRows += [pscustomobject]@{ Dc = $dc; Dot = $dot; Ms = $msText; Jit = $jit; Loss = $loss; Bars = $bars; RegionBest = $regionBest; Region = $r.Code }
+            Add-PanelItem $tbl $row
+            $script:PingRows += [pscustomobject]@{ Dc = $dc; Dot = $dot; Ms = $ms; Jit = $jit; Loss = $loss; Bars = $bars }
         }
-        $card.Child = $stack
-        [void]$PingList.Children.Add($card)
+    }
+    if (-not $script:PingRows.Count) {
+        Add-PanelItem $tbl (New-Row "Couldn't find any Fortnite servers" 'Check your internet connection and try again.' $null)
     }
     $script:PingBuilt = $true
 }
@@ -1006,66 +1490,43 @@ function Update-Ping {
         $avg = $dc.Avg
         $col = Ping-Color $avg
         $row.Dot.Fill = B $col
-        $row.Ms.Text = if ($null -ne $avg) { "$avg" } elseif ($dc.Sent -gt 2) { 'X' } else { '--' }
+        $row.Ms.Text = if ($null -ne $avg) { "$avg ms" } elseif ($dc.Sent -gt 2) { 'no reply' } else { '--' }
         $row.Ms.Foreground = B $col
-        $row.Jit.Text = if ($null -ne $dc.Jitter) { "jitter $($dc.Jitter) ms" } else { 'jitter --' }
-        $row.Jit.Foreground = B $(if ($dc.Jitter -gt 15) { '#FBBF24' } else { '#8B93A7' })
-        $row.Loss.Text = if ($null -ne $dc.Loss) { "loss $($dc.Loss)%" } else { 'loss --' }
-        $row.Loss.Foreground = B $(if ($dc.Loss -gt 0) { '#F87171' } else { '#8B93A7' })
+        $row.Jit.Text = if ($null -ne $dc.Jitter) { "$($dc.Jitter) ms" } else { '--' }
+        $row.Jit.Foreground = B $(if ($dc.Jitter -gt 15) { $C.Warn } else { $C.Muted })
+        $row.Loss.Text = if ($null -ne $dc.Loss) { "$($dc.Loss)%" } else { '--' }
+        $row.Loss.Foreground = B $(if ($dc.Loss -gt 0) { $C.Bad } else { $C.Muted })
 
         $samples = @(); try { $samples = @($dc.Samples.ToArray()) } catch { }
         $offset = $SPARK_N - $samples.Count
         for ($i = 0; $i -lt $SPARK_N; $i++) {
             $bar = $row.Bars[$i]
             $si = $i - $offset
-            if ($si -lt 0) { $bar.Height = 2; [Windows.Controls.Canvas]::SetTop($bar, 24); $bar.Fill = B '#1E2230'; continue }
+            if ($si -lt 0) { $bar.Height = 2; [Windows.Controls.Canvas]::SetTop($bar, 18); $bar.Fill = B $C.Line; continue }
             $v = $samples[$si]
-            if ($null -eq $v) { $bar.Height = 26; [Windows.Controls.Canvas]::SetTop($bar, 0); $bar.Fill = B '#5B1F2A'; continue }
-            $h = [math]::Max(3, [math]::Min(26, 3 + ($v / 200.0) * 23))
+            if ($null -eq $v) { $bar.Height = 20; [Windows.Controls.Canvas]::SetTop($bar, 0); $bar.Fill = B '#5A2A2E'; continue }
+            $h = [math]::Max(3, [math]::Min(20, 3 + ($v / 200.0) * 17))
             $bar.Height = $h
-            [Windows.Controls.Canvas]::SetTop($bar, 26 - $h)
+            [Windows.Controls.Canvas]::SetTop($bar, 20 - $h)
             $bar.Fill = B (Ping-Color $v)
         }
     }
-
-    # Per-region best
-    foreach ($grp in ($script:PingRows | Group-Object Region)) {
-        $vals = @($grp.Group | Where-Object { $null -ne $_.Dc.Avg } | ForEach-Object { $_.Dc.Avg })
-        $label = $grp.Group[0].RegionBest
-        if ($vals.Count) {
-            $m = ($vals | Measure-Object -Minimum).Minimum
-            $label.Text = "best $m ms"; $label.Foreground = B (Ping-Color $m)
-        }
-    }
-
-    # Hero
+    if (-not $script:HeroCity) { return }
     $live = @($script:PingRows | Where-Object { $null -ne $_.Dc.Avg -and $_.Dc.Loss -lt 30 } | Sort-Object { $_.Dc.Avg })
     if ($live.Count) {
         $b = $live[0].Dc
-        (W 'HeroCity').Text = "$($b.City)  -  $($b.RegionName)"
-        (W 'HeroMs').Text = "$($b.Avg)"
-        (W 'HeroMs').Foreground = B (Ping-Color $b.Avg)
-        $tip = "In Fortnite: Settings > Game > Matchmaking Region > $($b.Setting). Don't leave it on Auto. Fortnite picks the datacenter inside the region for you."
-        if ($b.Jitter -gt 15 -or $b.Loss -gt 0) { $tip += " Your connection is spiking or dropping packets right now. That's the lag you feel. Usually it's Wi-Fi, or someone streaming or downloading." }
-        (W 'HeroTip').Text = $tip
+        $script:HeroCity.Text = "Best for you: $($b.City)"
+        $script:HeroMs.Text = "$($b.Avg) ms"
+        $script:HeroMs.Foreground = B (Ping-Color $b.Avg)
+        $tip = "Set Matchmaking Region to $($b.Setting) in Settings > Game. Don't leave it on Auto."
+        if ($b.Jitter -gt 15 -or $b.Loss -gt 0) { $tip += ' Your ping is jumping around or dropping packets right now. That is the lag you feel. It is usually Wi-Fi, or someone else streaming or downloading.' }
+        $script:HeroTip.Text = $tip
     } elseif ($sync.Rounds -gt 3 -and $script:PingRows.Count) {
-        (W 'HeroCity').Text = 'No replies'
-        (W 'HeroMs').Text = '--'
-        (W 'HeroTip').Text = 'Every server timed out. Your firewall, router or VPN may be blocking ping, or your internet is down.'
+        $script:HeroCity.Text = 'No servers replied'
+        $script:HeroMs.Text = ''
+        $script:HeroTip.Text = 'Every ping timed out. A firewall, VPN or your router may be blocking ping, or your internet is down.'
     }
 }
-
-$timer = New-Object Windows.Threading.DispatcherTimer
-$timer.Interval = [TimeSpan]::FromMilliseconds(400)
-$timer.Add_Tick({
-    if ($sync.State -eq 'ready' -and -not $script:PingBuilt) { Build-PingRows }
-    if ($script:PingBuilt) { Update-Ping }
-    if ($sync.Status -and $sync.Status -ne $script:LastPingStatus) {
-        $script:LastPingStatus = $sync.Status
-        Set-Status $sync.Status $(if ($sync.State -eq 'error') { 'err' } else { 'info' })
-    }
-})
-$timer.Start()
 
 function Start-PingWorker {
     if ($script:Runspace) { return }
@@ -1078,86 +1539,135 @@ function Start-PingWorker {
     [void]$ps.BeginInvoke()
     $script:Runspace = @{ RS = $rs; PS = $ps }
 }
-
-$BtnPing = W 'BtnPing'
-$BtnPing.Add_Click({
+function Toggle-Ping {
     Start-PingWorker
     if ($sync.Running) {
         $sync.Running = $false
-        $BtnPing.Content = 'Start live test'
-        $BtnPing.Background = B '#0891B2'
-        Set-Status 'Ping test paused.'
+        $script:BtnPing.Content = 'Start test'; $script:BtnPing.Style = $window.FindResource('Primary')
+        Set-Status 'Ping test stopped.'
     } else {
         foreach ($dc in @($sync.DCs)) { if ($dc) { $dc.Samples.Clear(); $dc.Avg = $null; $dc.Jitter = $null; $dc.Loss = $null; $dc.Sent = 0 } }
         $sync.Rounds = 0
         $sync.Running = $true
-        $BtnPing.Content = 'Stop'
-        $BtnPing.Background = B '#BE123C'
-        (W 'HeroCity').Text = 'Testing...'
-        (W 'HeroTip').Text = 'Pinging every datacenter at once. Give it about 10 seconds to settle.'
+        $script:BtnPing.Content = 'Stop'; $script:BtnPing.Style = $window.FindResource('Btn')
+        $script:HeroCity.Text = 'Testing...'
+        $script:HeroTip.Text = 'Pinging every datacenter at once. Give it about ten seconds to settle.'
+    }
+}
+
+$timer = New-Object Windows.Threading.DispatcherTimer
+$timer.Interval = [TimeSpan]::FromMilliseconds(400)
+$timer.Add_Tick({
+    if ($sync.State -eq 'ready' -and -not $script:PingBuilt -and $script:PingTable) { Build-PingRows }
+    if ($script:PingBuilt) { Update-Ping }
+    if ($sync.Status -and $sync.Status -ne $script:LastPingStatus) {
+        $script:LastPingStatus = $sync.Status
+        Set-Status $sync.Status $(if ($sync.State -eq 'error') { 'err' } else { 'info' })
     }
 })
+$timer.Start()
+
+# ---------- Startup apps page ----------
+function Build-startup {
+    $body = $Bodies['startup']; $body.Children.Clear()
+    Add-PageHeader $body 'Startup apps' "Apps that open every time Windows starts and sit in the background. Turning one off here works like Task Manager's Startup tab. The app isn't removed." (New-Button 'Refresh' { Show-Page 'startup' })
+    $items = @(Get-StartupItems)
+    $panel = New-Panel
+    if (-not $items.Count) {
+        Add-PanelItem $panel (New-Row 'No startup apps found' 'Nothing extra opens when Windows starts.' $null)
+    }
+    foreach ($it in $items) {
+        $sw = New-Switch $it.Enabled
+        $sw.Tag = $it
+        $sw.Add_Click({
+            param($s, $e)
+            $it = $s.Tag
+            try {
+                Set-StartupEnabled $it ([bool]$s.IsChecked)
+                Set-Status ("$($it.Label) " + $(if ($s.IsChecked) { 'will start with Windows again.' } else { "won't start with Windows anymore." })) 'ok'
+            } catch { Set-Status "Couldn't change $($it.Label): $($_.Exception.Message)" 'err'; $s.IsChecked = -not $s.IsChecked }
+        })
+        $parts = @()
+        if ($it.Publisher) { $parts += $it.Publisher }
+        if ($it.Scope -eq 'All users') { $parts += 'starts for every user on this PC' }
+        Add-PanelItem $panel (New-Row $it.Label ($parts -join ', ') $sw)
+    }
+    [void]$body.Children.Add($panel)
+    $on = @($items | Where-Object { $_.Enabled }).Count
+    Set-Status "$on of $($items.Count) startup apps are on."
+}
+
+# ---------- Background apps page ----------
+function Build-apps {
+    $body = $Bodies['apps']; $body.Children.Clear()
+    Add-PageHeader $body 'Background apps' 'Apps open right now, sorted by how much memory they use. Close the ones you do not need before a match.' (New-Button 'Refresh' { Show-Page 'apps' })
+    $apps = @(Get-HeavyApps)
+    $panel = New-Panel
+    if (-not $apps.Count) { Add-PanelItem $panel (New-Row 'Nothing heavy is running' 'No other app is using more than 100 MB.' $null) }
+    foreach ($a in $apps) {
+        $right = New-Object Windows.Controls.StackPanel
+        $right.Orientation = 'Horizontal'
+        $size = New-Text (Format-Bytes $a.Bytes) 16 $(if ($a.Bytes -gt 1GB) { $C.Warn } else { $C.Text }) 'SemiBold' -Head
+        $size.VerticalAlignment = 'Center'; $size.Margin = T 0 0 16 0; $size.MinWidth = 70; $size.TextAlignment = 'Right'
+        [void]$right.Children.Add($size)
+        $close = New-Button 'Close' {
+            param($s, $e)
+            $proc = $s.Tag.Process; $label = $s.Tag.Label
+            $r = [Windows.MessageBox]::Show("Close $label? Anything unsaved in it will be lost.", $APP_NAME, 'YesNo', 'Question')
+            if ($r -ne 'Yes') { return }
+            $ps = @(Get-Process -Name $proc -ErrorAction SilentlyContinue)
+            foreach ($p in $ps) { try { [void]$p.CloseMainWindow() } catch { } }
+            Start-Sleep -Milliseconds 1500
+            Get-Process -Name $proc -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Set-Status "$label closed." 'ok'
+            Show-Page 'apps'
+        }
+        $close.Tag = @{ Process = $a.Process; Label = $a.Label }
+        [void]$right.Children.Add($close)
+        $sub = if ($a.Count -gt 1) { "$($a.Count) processes" } else { '' }
+        Add-PanelItem $panel (New-Row $label $sub $right)
+    }
+    [void]$body.Children.Add($panel)
+}
 
 # ---------- Tools page ----------
-$ToolsList = W 'ToolsList'
-function Add-Tool($title, $desc, $btnText, $btnColor, $action) {
-    $card = New-Card
-    $g = New-Object Windows.Controls.Grid
-    $c1 = New-Object Windows.Controls.ColumnDefinition; $c1.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
-    $c2 = New-Object Windows.Controls.ColumnDefinition; $c2.Width = [Windows.GridLength]::Auto
-    $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2)
-    $sp = New-Object Windows.Controls.StackPanel; $sp.Margin = T 0 0 20 0
-    [void]$sp.Children.Add((New-Text $title 15 '#FFFFFF' 'SemiBold'))
-    $d = New-Text $desc 12.5 '#8B93A7'; $d.TextWrapping = 'Wrap'; $d.Margin = T 0 5 0 0
-    [void]$sp.Children.Add($d)
-    $btn = New-Object Windows.Controls.Button
-    $btn.Style = $window.FindResource('Btn'); $btn.Content = $btnText; $btn.Background = B $btnColor
-    $btn.VerticalAlignment = 'Center'; $btn.MinWidth = 150
-    $btn.Add_Click($action)
-    [Windows.Controls.Grid]::SetColumn($btn, 1)
-    [void]$g.Children.Add($sp); [void]$g.Children.Add($btn)
-    $card.Child = $g
-    [void]$ToolsList.Children.Add($card)
-}
+function Build-tools {
+    $body = $Bodies['tools']; $body.Children.Clear()
+    Add-PageHeader $body 'Tools' 'A safety net, a cleanup and a lag test.'
+    $panel = New-Panel
+    Add-PanelItem $panel (New-Row 'Make a restore point' 'Saves a snapshot of your Windows settings. If anything feels off later, roll back from Start > Create a restore point > System Restore.' (New-Button 'Create' -Primary {
+        Set-Status 'Creating a restore point. This can take up to a minute...'
+        try {
+            Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
+            Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' 'SystemRestorePointCreationFrequency' 0
+            Checkpoint-Computer -Description "Before vzc1's optimizations" -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
+            Set-Status 'Restore point created.' 'ok'
+        } catch { Set-Status "Couldn't create a restore point: $($_.Exception.Message)" 'err' }
+    }))
+    Add-PanelItem $panel (New-Row 'Undo all tweaks' 'Switches every tweak on the Tweaks page back off.' (New-Button 'Undo all' {
+        $r = [Windows.MessageBox]::Show('Switch every tweak back off?', $APP_NAME, 'YesNo', 'Question')
+        if ($r -ne 'Yes') { return }
+        foreach ($t in $Tweaks) { $s = Get-TweakState $t; if ($s.Available -and $s.On) { try { & $t.Off } catch { } } }
+        $script:Built['tweaks'] = $false
+        Set-Status 'Every tweak is off.' 'ok'
+    }))
+    Add-PanelItem $panel (New-Row 'Clean temp files' 'Deletes leftover files in your temp folders. Your shader cache is left alone, because deleting it causes stutters while it rebuilds.' (New-Button 'Clean' {
+        Set-Status 'Cleaning temp files...'
+        $paths = @($env:TEMP, "$env:SystemRoot\Temp")
+        $before = 0; foreach ($p in $paths) { $before += (Get-ChildItem $p -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }
+        foreach ($p in $paths) { Get-ChildItem $p -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
+        $after = 0; foreach ($p in $paths) { $after += (Get-ChildItem $p -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }
+        Set-Status ("Cleaned {0}." -f (Format-Bytes ([math]::Max(0, $before - $after)))) 'ok'
+    }))
+    Add-PanelItem $panel (New-Row 'Bufferbloat test' 'Checks if your ping shoots up when someone else on your network streams or downloads. A grade of C or worse means you should turn on QoS or SQM in your router settings.' (New-Button 'Open test' { Start-Process 'https://www.waveform.com/tools/bufferbloat' }))
+    [void]$body.Children.Add($panel)
 
-Add-Tool 'Make a restore point' 'Saves a snapshot of your Windows settings. If anything ever feels off, you can roll everything back from Start > "Create a restore point" > System Restore.' 'Create' '#7C5CFF' {
-    Set-Status 'Creating restore point... (can take up to a minute)'
-    try {
-        Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
-        Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' 'SystemRestorePointCreationFrequency' 0
-        Checkpoint-Computer -Description "Before vzc1's optimizations" -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
-        Set-Status "Restore point 'Before vzc1's optimizations' created." 'ok'
-    } catch { Set-Status "Couldn't create restore point: $($_.Exception.Message)" 'err' }
+    Add-Heading $body 'Good to know'
+    $notes = New-Panel
+    Add-PanelItem $notes (New-Row 'No app can lower your base ping' 'Ping depends on how far you are from the server. What you can fix is lag spikes, and an Ethernet cable fixes most of them.' $null)
+    Add-PanelItem $notes (New-Row 'Update your graphics driver' 'New NVIDIA and AMD drivers often add FPS in Fortnite. Get them from the NVIDIA app or AMD Software.' $null)
+    [void]$body.Children.Add($notes)
 }
-
-Add-Tool 'Clean temp files' 'Deletes leftover junk in your temp folders. Your shader cache is left alone on purpose, because deleting it causes stutters while it rebuilds.' 'Clean' '#1E2230' {
-    Set-Status 'Cleaning temp files...'
-    $paths = @($env:TEMP, "$env:SystemRoot\Temp")
-    $before = 0; foreach ($p in $paths) { $before += (Get-ChildItem $p -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }
-    foreach ($p in $paths) { Get-ChildItem $p -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
-    $after = 0; foreach ($p in $paths) { $after += (Get-ChildItem $p -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }
-    Set-Status ("Freed {0} MB." -f [math]::Round(($before - $after) / 1MB, 1)) 'ok'
-}
-
-Add-Tool 'Bufferbloat test' 'Checks whether your ping shoots up when someone else on your Wi-Fi is streaming or downloading. A C grade or worse means you should turn on QoS or SQM in your router settings.' 'Open test' '#1E2230' {
-    Start-Process 'https://www.waveform.com/tools/bufferbloat'
-}
-
-$notes = New-Card
-$ns = New-Object Windows.Controls.StackPanel
-[void]$ns.Children.Add((New-Text 'Biggest wins are in Fortnite itself' 15 '#FFFFFF' 'SemiBold'))
-foreach ($line in @(
-    'Rendering Mode: Performance. Often doubles FPS on low and mid-range PCs.',
-    'NVIDIA Reflex: On + Boost. Cuts input delay a lot.',
-    'Window Mode: Fullscreen, V-Sync off.',
-    'Frame rate limit: your monitor refresh rate, or a little above it, so frames stay steady.',
-    'No app can lower your base ping. That depends on how far away the server is. An Ethernet cable is the biggest fix for lag spikes.'
-)) {
-    $l = New-Text ("-  " + $line) 12.5 '#A0A8BA'; $l.TextWrapping = 'Wrap'; $l.Margin = T 0 6 0 0
-    [void]$ns.Children.Add($l)
-}
-$notes.Child = $ns
-[void]$ToolsList.Children.Add($notes)
 
 # ---------- Run ----------
 $window.Add_Closed({
@@ -1165,5 +1675,6 @@ $window.Add_Closed({
     $timer.Stop()
     if ($script:Runspace) { try { $script:Runspace.PS.Stop(); $script:Runspace.RS.Close() } catch { } }
 })
+$window.Add_ContentRendered({ Go-Page 'home' })
 
 [void]$window.ShowDialog()
