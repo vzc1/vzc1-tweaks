@@ -10,7 +10,7 @@ If Windows shows "Windows protected your PC", click **More info**, then **Run an
 
 ## What it does
 
-**Home** checks your PC before you play:
+**Dashboard** shows live CPU and memory use and checks your PC before you play:
 - Monitor stuck at 60 Hz when it supports more. Switches it with one click.
 - Laptop running on battery
 - Power plan not on max performance
@@ -18,7 +18,7 @@ If Windows shows "Windows protected your PC", click **More info**, then **Run an
 - Wi-Fi instead of a cable
 - Background apps using a lot of memory
 
-**Tweaks**
+**Tweaks** (Performance, Network, Mouse and keyboard)
 - Max performance power plan, Game DVR off, Game Mode, hardware GPU scheduling, windowed game optimizations
 - High CPU priority for Fortnite, run Fortnite on the dedicated GPU
 - Network card power saving off, update sharing off, network throttling off

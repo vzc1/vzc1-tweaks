@@ -70,7 +70,7 @@ function Remove-Reg($Path, $Name) {
 
 # ---------- Constants ----------
 $APP_NAME      = "vzc1's optimizations"
-$APP_VERSION   = '3.0'
+$APP_VERSION   = '4.0'
 $GUID_RE       = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}'
 $PLAN_BALANCED = '381b4222-f694-41f0-9685-ff5bb260df2e'
 $PLAN_HIGH     = '8c5e7fda-e8bf-4a96-9a85-cf4dbd8f9e7f'
@@ -303,11 +303,11 @@ $STARTUP_SOURCES = @(
 
 function Get-ExeFromCommand($cmd) {
     if (-not $cmd) { return $null }
-    $c = [Environment]::ExpandEnvironmentVariables($cmd.Trim())
-    if ($c.StartsWith('"')) { $e = $c.IndexOf('"', 1); if ($e -gt 1) { return $c.Substring(1, $e - 1) } }
-    $i = $c.ToLower().IndexOf('.exe')
-    if ($i -gt 0) { return $c.Substring(0, $i + 4) }
-    return $c.Split(' ')[0]
+    $cmdText = [Environment]::ExpandEnvironmentVariables($cmdTextmd.Trim())
+    if ($cmdText.StartsWith('"')) { $e = $cmdText.IndexOf('"', 1); if ($e -gt 1) { return $cmdText.Substring(1, $e - 1) } }
+    $i = $cmdText.ToLower().IndexOf('.exe')
+    if ($i -gt 0) { return $cmdText.Substring(0, $i + 4) }
+    return $cmdText.Split(' ')[0]
 }
 
 function Get-StartupItems {
@@ -574,15 +574,21 @@ $PingWorker = {
 
 
 # ---------- UI ----------
+Add-Type -AssemblyName Microsoft.VisualBasic
+
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="vzc1's optimizations" Width="1080" Height="740" MinWidth="900" MinHeight="560"
+        Title="vzc1's optimizations" Width="1120" Height="760" MinWidth="940" MinHeight="580"
         WindowStartupLocation="CenterScreen" WindowStyle="None" AllowsTransparency="True"
         Background="Transparent" ResizeMode="CanResizeWithGrip"
-        FontFamily="Segoe UI" TextOptions.TextFormattingMode="Display" UseLayoutRounding="True">
+        FontFamily="Segoe UI Variable Text, Segoe UI" TextOptions.TextFormattingMode="Display" UseLayoutRounding="True">
   <Window.Resources>
-    <FontFamily x:Key="Head">Bahnschrift SemiCondensed, Bahnschrift, Segoe UI</FontFamily>
+    <FontFamily x:Key="Head">Segoe UI Variable Display, Segoe UI</FontFamily>
+    <LinearGradientBrush x:Key="OrangeGrad" StartPoint="0,0" EndPoint="1,0">
+      <GradientStop Color="#FF9B4A" Offset="0"/>
+      <GradientStop Color="#FF6A13" Offset="1"/>
+    </LinearGradientBrush>
 
     <Style TargetType="ScrollBar">
       <Setter Property="Width" Value="6"/>
@@ -595,7 +601,7 @@ $PingWorker = {
                 <Thumb>
                   <Thumb.Template>
                     <ControlTemplate TargetType="Thumb">
-                      <Border CornerRadius="3" Background="#33383F"/>
+                      <Border CornerRadius="3" Background="#C2571A"/>
                     </ControlTemplate>
                   </Thumb.Template>
                 </Thumb>
@@ -608,27 +614,46 @@ $PingWorker = {
 
     <Style x:Key="Switch" TargetType="CheckBox">
       <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="Focusable" Value="True"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="CheckBox">
-            <Grid Width="40" Height="22" Background="Transparent">
-              <Border x:Name="Track" CornerRadius="11" Background="#2A2E34" BorderBrush="#3A3F46" BorderThickness="1"/>
-              <Border x:Name="Knob" Width="14" Height="14" CornerRadius="7" Background="#8A9099" HorizontalAlignment="Left" Margin="4,0,0,0"/>
+            <Grid Width="42" Height="22" Background="Transparent">
+              <Border x:Name="Track" CornerRadius="11" Background="#241D18" BorderBrush="#3A2F27" BorderThickness="1"/>
+              <Border x:Name="Knob" Width="14" Height="14" CornerRadius="7" Background="#8C827A" HorizontalAlignment="Left" Margin="4,0,0,0"/>
             </Grid>
             <ControlTemplate.Triggers>
               <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="Track" Property="Background" Value="#FF7A1A"/>
-                <Setter TargetName="Track" Property="BorderBrush" Value="#FF7A1A"/>
-                <Setter TargetName="Knob" Property="Background" Value="#1A0C02"/>
+                <Setter TargetName="Track" Property="Background" Value="{StaticResource OrangeGrad}"/>
+                <Setter TargetName="Track" Property="BorderBrush" Value="#FF8A33"/>
+                <Setter TargetName="Knob" Property="Background" Value="#FFFFFF"/>
                 <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
                 <Setter TargetName="Knob" Property="Margin" Value="0,0,4,0"/>
               </Trigger>
-              <Trigger Property="IsKeyboardFocused" Value="True">
-                <Setter TargetName="Track" Property="BorderBrush" Value="#ECEEF0"/>
-              </Trigger>
-              <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Opacity" Value="0.3"/>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Track" Property="BorderBrush" Value="#FFFFFF"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.3"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="Check" TargetType="CheckBox">
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Foreground" Value="#A39B94"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <StackPanel Orientation="Horizontal" Background="Transparent">
+              <Border x:Name="Box" Width="16" Height="16" CornerRadius="4" Background="#241D18" BorderBrush="#4A3C31" BorderThickness="1" VerticalAlignment="Center">
+                <TextBlock x:Name="Tick" Text="&#xE73E;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+              </Border>
+              <ContentPresenter Margin="9,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Box" Property="Background" Value="#FF7A1A"/>
+                <Setter TargetName="Box" Property="BorderBrush" Value="#FF7A1A"/>
+                <Setter TargetName="Tick" Property="Visibility" Value="Visible"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -637,23 +662,23 @@ $PingWorker = {
     </Style>
 
     <Style x:Key="Btn" TargetType="Button">
-      <Setter Property="Foreground" Value="#ECEEF0"/>
-      <Setter Property="Background" Value="#2A2E34"/>
-      <Setter Property="BorderBrush" Value="#3A3F46"/>
-      <Setter Property="FontFamily" Value="{StaticResource Head}"/>
-      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="Foreground" Value="#F3EEEA"/>
+      <Setter Property="Background" Value="#1A1512"/>
+      <Setter Property="BorderBrush" Value="#3A2F27"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="FontWeight" Value="Bold"/>
       <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="Padding" Value="16,8"/>
+      <Setter Property="Padding" Value="16,9"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="{TemplateBinding Padding}">
+            <Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="{TemplateBinding Padding}">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.85"/></Trigger>
-              <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.7"/></Trigger>
-              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#ECEEF0"/></Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#FF7A1A"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.75"/></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#FFFFFF"/></Trigger>
               <Trigger Property="IsEnabled" Value="False"><Setter TargetName="B" Property="Opacity" Value="0.35"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -662,31 +687,45 @@ $PingWorker = {
     </Style>
 
     <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource Btn}">
-      <Setter Property="Foreground" Value="#1A0C02"/>
-      <Setter Property="Background" Value="#FF7A1A"/>
-      <Setter Property="BorderBrush" Value="#FF7A1A"/>
-    </Style>
-
-    <Style x:Key="Seg" TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#B8BDC4"/>
-      <Setter Property="FontFamily" Value="{StaticResource Head}"/>
-      <Setter Property="FontSize" Value="14"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="Margin" Value="0,0,-1,0"/>
+      <Setter Property="Foreground" Value="#FFFFFF"/>
       <Setter Property="Template">
         <Setter.Value>
-          <ControlTemplate TargetType="RadioButton">
-            <Border x:Name="B" Background="#23272C" BorderBrush="#3A3F46" BorderThickness="1" Padding="12,6">
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="B" Background="{StaticResource OrangeGrad}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+              <Border.Effect>
+                <DropShadowEffect Color="#FF6A13" BlurRadius="18" ShadowDepth="0" Opacity="0.45"/>
+              </Border.Effect>
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#2C3036"/></Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.9"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.75"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="B" Property="Opacity" Value="0.35"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="Seg" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#C9C0B8"/>
+      <Setter Property="FontSize" Value="12.5"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="B" Background="#1A1512" BorderBrush="#3A2F27" BorderThickness="1" CornerRadius="7" Padding="12,6">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#FF7A1A"/></Trigger>
               <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="B" Property="Background" Value="#FF7A1A"/>
-                <Setter TargetName="B" Property="BorderBrush" Value="#FF7A1A"/>
-                <Setter Property="Foreground" Value="#1A0C02"/>
+                <Setter TargetName="B" Property="Background" Value="{StaticResource OrangeGrad}"/>
+                <Setter TargetName="B" Property="BorderBrush" Value="#FF8A33"/>
+                <Setter Property="Foreground" Value="#FFFFFF"/>
               </Trigger>
-              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#ECEEF0"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -694,22 +733,26 @@ $PingWorker = {
     </Style>
 
     <Style x:Key="Nav" TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#9BA1A8"/>
-      <Setter Property="FontFamily" Value="{StaticResource Head}"/>
-      <Setter Property="FontSize" Value="16"/>
+      <Setter Property="Foreground" Value="#B9B0A8"/>
+      <Setter Property="FontSize" Value="13.5"/>
       <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Margin" Value="0,1,0,1"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="RadioButton">
-            <Grid x:Name="G" Background="Transparent">
-              <Rectangle x:Name="Bar" Width="3" HorizontalAlignment="Left" Fill="Transparent"/>
-              <ContentPresenter Margin="22,9,12,9" VerticalAlignment="Center"/>
+            <Grid>
+              <Border x:Name="Bg" CornerRadius="8" Background="Transparent"/>
+              <Border x:Name="Bar" Width="3" CornerRadius="2" HorizontalAlignment="Left" Margin="0,7,0,7" Background="Transparent"/>
+              <ContentPresenter Margin="12,8,10,8" VerticalAlignment="Center"/>
             </Grid>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="#ECEEF0"/></Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bg" Property="Background" Value="#1C1612"/>
+                <Setter Property="Foreground" Value="#FFFFFF"/>
+              </Trigger>
               <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="Bar" Property="Fill" Value="#FF7A1A"/>
-                <Setter TargetName="G" Property="Background" Value="#1B1E22"/>
+                <Setter TargetName="Bg" Property="Background" Value="#2A1D13"/>
+                <Setter TargetName="Bar" Property="Background" Value="#FF7A1A"/>
                 <Setter Property="Foreground" Value="#FFFFFF"/>
               </Trigger>
             </ControlTemplate.Triggers>
@@ -719,20 +762,18 @@ $PingWorker = {
     </Style>
 
     <Style x:Key="ChromeBtn" TargetType="Button">
-      <Setter Property="Foreground" Value="#9BA1A8"/>
+      <Setter Property="Foreground" Value="#A39B94"/>
       <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/>
       <Setter Property="FontSize" Value="10"/>
       <Setter Property="Width" Value="46"/>
-      <Setter Property="Height" Value="32"/>
+      <Setter Property="Height" Value="38"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border x:Name="B" Background="Transparent">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
+            <Border x:Name="B" Background="Transparent"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="B" Property="Background" Value="#2A2E34"/>
+                <Setter TargetName="B" Property="Background" Value="#241D18"/>
                 <Setter Property="Foreground" Value="#FFFFFF"/>
               </Trigger>
             </ControlTemplate.Triggers>
@@ -742,46 +783,96 @@ $PingWorker = {
     </Style>
   </Window.Resources>
 
-  <Border CornerRadius="8" Background="#16181B" BorderBrush="#2C3036" BorderThickness="1">
+  <Border CornerRadius="10" Background="#0E0C0B" BorderBrush="#2B231C" BorderThickness="1">
     <Grid>
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="210"/>
-        <ColumnDefinition Width="*"/>
-      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="38"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
 
-      <Border Grid.Column="0" Background="#111315" CornerRadius="8,0,0,8">
-        <DockPanel>
-          <StackPanel x:Name="Logo" DockPanel.Dock="Top" Margin="22,26,16,30" Background="Transparent">
-            <TextBlock Text="vzc1" FontFamily="Bahnschrift" FontWeight="Bold" FontSize="34" Foreground="#FFFFFF" Margin="0,0,0,-6"/>
-            <TextBlock Text="optimizations" FontFamily="{StaticResource Head}" FontSize="17" Foreground="#FF7A1A"/>
+      <!-- Top bar -->
+      <Border x:Name="TitleBar" Grid.Row="0" Background="#0B0908" CornerRadius="10,10,0,0" BorderBrush="#221B16" BorderThickness="0,0,0,1">
+        <Grid>
+          <StackPanel Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center">
+            <Border Width="20" Height="20" CornerRadius="5" Background="{StaticResource OrangeGrad}">
+              <TextBlock Text="V" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Black" FontSize="12" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <TextBlock Text="VZC1'S OPTIMIZATIONS" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="13" Foreground="#F3EEEA" Margin="10,0,0,0" VerticalAlignment="Center"/>
           </StackPanel>
-          <StackPanel DockPanel.Dock="Bottom" Margin="22,0,16,18">
-            <TextBlock x:Name="SideConn" FontSize="12" Foreground="#9BA1A8"/>
-            <TextBlock x:Name="SideVer" FontSize="11" Foreground="#5C626A" Margin="0,4,0,0"/>
-          </StackPanel>
-          <StackPanel x:Name="NavList"/>
-        </DockPanel>
-      </Border>
-
-      <Grid Grid.Column="1">
-        <Grid.RowDefinitions>
-          <RowDefinition Height="32"/>
-          <RowDefinition Height="*"/>
-          <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-
-        <Grid x:Name="TitleBar" Grid.Row="0" Background="Transparent">
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="BtnMin" Style="{StaticResource ChromeBtn}" Content="&#xE921;"/>
             <Button x:Name="BtnClose" Style="{StaticResource ChromeBtn}" Content="&#xE8BB;"/>
           </StackPanel>
         </Grid>
+      </Border>
 
-        <Grid x:Name="Pages" Grid.Row="1"/>
+      <Grid Grid.Row="1">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="226"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
 
-        <Border Grid.Row="2" BorderBrush="#2C3036" BorderThickness="0,1,0,0" Padding="36,9,40,9">
-          <TextBlock x:Name="Status" Foreground="#9BA1A8" FontSize="12" TextWrapping="Wrap" Text="Ready."/>
+        <!-- Sidebar -->
+        <Border Grid.Column="0" Background="#0B0908" BorderBrush="#221B16" BorderThickness="0,0,1,0" CornerRadius="0,0,0,10">
+          <DockPanel Margin="10,14,10,12">
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,0,0,14">
+              <Border Width="40" Height="40" CornerRadius="9" Background="{StaticResource OrangeGrad}">
+                <Border.Effect><DropShadowEffect Color="#FF6A13" BlurRadius="16" ShadowDepth="0" Opacity="0.35"/></Border.Effect>
+                <TextBlock Text="V" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Black" FontSize="22" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                <TextBlock Text="vzc1's optimizations" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="14" Foreground="#FFFFFF"/>
+                <TextBlock x:Name="SideSub" Text="Free and open source" FontSize="11" Foreground="#FF8A33"/>
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel DockPanel.Dock="Bottom">
+              <Border Background="#15110E" BorderBrush="#2B231C" BorderThickness="1" CornerRadius="10" Padding="12,10,12,12" Margin="0,0,0,8">
+                <StackPanel>
+                  <TextBlock Text="TWEAKS ON" FontSize="10" FontWeight="Bold" Foreground="#6F6760"/>
+                  <TextBlock x:Name="SideCount" Text="0 of 0" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="17" Foreground="#FFFFFF" Margin="0,2,0,8"/>
+                  <Grid Height="4" Margin="0,0,0,10">
+                    <Border CornerRadius="2" Background="#2B231C"/>
+                    <Border x:Name="SideBar" CornerRadius="2" Background="{StaticResource OrangeGrad}" HorizontalAlignment="Left" Width="0"/>
+                  </Grid>
+                  <Button x:Name="SideAll" Style="{StaticResource Primary}" Content="TURN ON ALL" Padding="10,8"/>
+                </StackPanel>
+              </Border>
+              <Button x:Name="SideExit" Style="{StaticResource Btn}" Content="EXIT" Padding="10,8"/>
+            </StackPanel>
+
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+              <StackPanel x:Name="NavList"/>
+            </ScrollViewer>
+          </DockPanel>
         </Border>
+
+        <!-- Content -->
+        <Grid Grid.Column="1">
+          <Grid.Background>
+            <RadialGradientBrush Center="1,0" GradientOrigin="1,0" RadiusX="0.75" RadiusY="0.9">
+              <GradientStop Color="#2A160A" Offset="0"/>
+              <GradientStop Color="#0E0C0B" Offset="1"/>
+            </RadialGradientBrush>
+          </Grid.Background>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Grid x:Name="Pages" Grid.Row="0"/>
+          <Border Grid.Row="1" Background="#0B0908" BorderBrush="#221B16" BorderThickness="0,1,0,0" CornerRadius="0,0,10,0" Padding="22,10,26,10">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <CheckBox x:Name="AutoRestore" Style="{StaticResource Check}" IsChecked="True" VerticalAlignment="Center">
+                <TextBlock Text="Make a restore point before Turn on all" FontSize="12" Foreground="#A39B94"/>
+              </CheckBox>
+              <TextBlock x:Name="Status" Grid.Column="1" Foreground="#A39B94" FontSize="12" TextWrapping="Wrap" TextAlignment="Right" VerticalAlignment="Center" Margin="20,0,0,0" Text="Ready."/>
+            </Grid>
+          </Border>
+        </Grid>
       </Grid>
     </Grid>
   </Border>
@@ -793,11 +884,12 @@ function W($name) { $window.FindName($name) }
 
 # ---------- Palette ----------
 $C = @{
-    Bg = '#16181B'; Panel = '#1D2024'; Panel2 = '#23272C'; Line = '#2C3036'
-    Text = '#ECEEF0'; Muted = '#9BA1A8'; Dim = '#6C727A'
-    Accent = '#FF7A1A'; OnAccent = '#1A0C02'; Good = '#5BD38A'; Warn = '#F2C94C'; Bad = '#EF6461'
+    Bg = '#0E0C0B'; Panel = '#15110E'; Panel2 = '#1A1512'; Line = '#2B231C'
+    Text = '#F3EEEA'; Muted = '#A39B94'; Dim = '#6F6760'
+    Accent = '#FF7A1A'; AccentSoft = '#FF8A33'; OnAccent = '#FFFFFF'; Good = '#5BD38A'; Warn = '#FFB04D'; Bad = '#FF5A5A'
 }
 $HeadFont = $window.FindResource('Head')
+$OrangeGrad = $window.FindResource('OrangeGrad')
 $bc = New-Object Windows.Media.BrushConverter
 $BrushCache = @{}
 function B($hex) {
@@ -818,7 +910,7 @@ function New-Text($text, $size = 13, $color = $C.Text, $weight = 'Normal', [swit
 function New-Button($text, [switch]$Primary, $onClick) {
     $b = New-Object Windows.Controls.Button
     $b.Style = $window.FindResource($(if ($Primary) { 'Primary' } else { 'Btn' }))
-    $b.Content = $text
+    $b.Content = $text.ToUpper()
     $b.VerticalAlignment = 'Center'
     if ($onClick) { $b.Add_Click($onClick) }
     $b
@@ -830,33 +922,48 @@ function New-Switch($checked) {
     $cb.IsChecked = [bool]$checked
     $cb
 }
-function New-Panel {
+function New-Label($text) {
+    $l = New-Text $text.ToUpper() 11 $C.Accent 'Bold'
+    $l
+}
+$script:NextPanelTitle = $null
+function New-Panel($title) {
+    if (-not $title) { $title = $script:NextPanelTitle }
+    $script:NextPanelTitle = $null
     $p = New-Object Windows.Controls.Border
     $p.Background = B $C.Panel
     $p.BorderBrush = B $C.Line
     $p.BorderThickness = T 1 1 1 1
-    $p.CornerRadius = New-Object Windows.CornerRadius 6
-    $p.Margin = T 0 0 0 18
-    $p.Child = New-Object Windows.Controls.StackPanel
+    $p.CornerRadius = New-Object Windows.CornerRadius 12
+    $p.Margin = T 0 0 0 16
+    $p.Tag = 0
+    $sp = New-Object Windows.Controls.StackPanel
+    if ($title) {
+        $l = New-Label $title
+        $l.Margin = T 18 15 18 3
+        [void]$sp.Children.Add($l)
+    }
+    $p.Child = $sp
     $p
 }
 function Add-PanelItem($panel, $element) {
-    if ($panel.Child.Children.Count -gt 0) {
+    if ($panel.Tag -gt 0) {
         $sep = New-Object Windows.Controls.Border
-        $sep.Height = 1; $sep.Background = B $C.Line
+        $sep.Height = 1; $sep.Background = B '#211A15'; $sep.Margin = T 18 0 18 0
         [void]$panel.Child.Children.Add($sep)
     }
+    $panel.Tag = $panel.Tag + 1
     [void]$panel.Child.Children.Add($element)
 }
 function New-Row($title, $desc, $right, $leftAdornment) {
     $g = New-Object Windows.Controls.Grid
-    $g.Margin = T 18 13 18 13
+    $g.Margin = T 18 12 18 12
     $cols = @()
     if ($leftAdornment) { $cols += 'auto' }
     $cols += 'star'; $cols += 'auto'
-    foreach ($c in $cols) {
+    foreach ($colType in $cols) {
         $cd = New-Object Windows.Controls.ColumnDefinition
-        $cd.Width = if ($c -eq 'star') { New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star) } else { [Windows.GridLength]::Auto }
+        $cd.Width = if ($colType -eq 'star') { New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star) } else { [Windows.GridLength]::Auto }
         $g.ColumnDefinitions.Add($cd)
     }
     $col = 0
@@ -872,7 +979,7 @@ function New-Row($title, $desc, $right, $leftAdornment) {
     if ($desc) {
         $d = New-Text $desc 12.5 $C.Muted -Wrap
         $d.Margin = T 0 3 0 0
-        $d.MaxWidth = 620; $d.HorizontalAlignment = 'Left'
+        $d.MaxWidth = 640; $d.HorizontalAlignment = 'Left'
         [void]$sp.Children.Add($d)
     }
     [Windows.Controls.Grid]::SetColumn($sp, $col)
@@ -889,22 +996,18 @@ function New-Dot($color) {
     $e.Width = 9; $e.Height = 9; $e.Fill = B $color
     $e
 }
-function Add-Heading($body, $text) {
-    $h = New-Text $text 17 $C.Text 'SemiBold' -Head
-    $h.Margin = T 0 6 0 9
-    [void]$body.Children.Add($h)
-}
+function Add-Heading($body, $text) { $script:NextPanelTitle = $text }
 function Add-PageHeader($body, $title, $sub, $right) {
     $g = New-Object Windows.Controls.Grid
-    $g.Margin = T 0 6 0 22
+    $g.Margin = T 0 0 0 18
     $c1 = New-Object Windows.Controls.ColumnDefinition; $c1.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
     $c2 = New-Object Windows.Controls.ColumnDefinition; $c2.Width = [Windows.GridLength]::Auto
     $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2)
     $sp = New-Object Windows.Controls.StackPanel
-    [void]$sp.Children.Add((New-Text $title 34 $C.Text 'SemiBold' -Head))
+    [void]$sp.Children.Add((New-Text $title 28 '#FFFFFF' 'Bold' -Head))
     if ($sub) {
         $s = New-Text $sub 13 $C.Muted -Wrap
-        $s.MaxWidth = 600; $s.HorizontalAlignment = 'Left'; $s.Margin = T 0 2 0 0
+        $s.MaxWidth = 620; $s.HorizontalAlignment = 'Left'; $s.Margin = T 0 3 0 0
         [void]$sp.Children.Add($s)
     }
     [void]$g.Children.Add($sp)
@@ -912,8 +1015,7 @@ function Add-PageHeader($body, $title, $sub, $right) {
     [void]$body.Children.Add($g)
 }
 function New-Seg($options, $current) {
-    $sp = New-Object Windows.Controls.StackPanel
-    $sp.Orientation = 'Horizontal'
+    $sp = New-Object Windows.Controls.WrapPanel
     $group = [guid]::NewGuid().ToString()
     $buttons = @()
     foreach ($o in $options) {
@@ -926,6 +1028,7 @@ function New-Seg($options, $current) {
         [void]$sp.Children.Add($rb)
         $buttons += $rb
     }
+    $sp.MaxWidth = 460
     [pscustomobject]@{ Panel = $sp; Buttons = $buttons }
 }
 function Get-SegValue($seg) { foreach ($b in $seg.Buttons) { if ($b.IsChecked) { return $b.Tag } }; return $null }
@@ -940,10 +1043,10 @@ function Set-Status($msg, $kind = 'info') {
 
 # ---------- Window chrome ----------
 (W 'TitleBar').Add_MouseLeftButtonDown({ $window.DragMove() })
-(W 'Logo').Add_MouseLeftButtonDown({ $window.DragMove() })
 (W 'BtnMin').Add_Click({ $window.WindowState = 'Minimized' })
 (W 'BtnClose').Add_Click({ $window.Close() })
-(W 'SideVer').Text = "Version $APP_VERSION"
+(W 'SideExit').Add_Click({ $window.Close() })
+(W 'SideSub').Text = "Free and open source  v$APP_VERSION"
 
 function Get-ConnectionType {
     $up = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up'
@@ -952,49 +1055,89 @@ function Get-ConnectionType {
     return 'wifi'
 }
 $script:Conn = Get-ConnectionType
-(W 'SideConn').Text = switch ($script:Conn) { 'wired' { 'Connected by cable' } 'wifi' { 'Connected by Wi-Fi' } default { 'Offline' } }
 
 # ---------- Pages + navigation ----------
-$PAGE_DEFS = @(
-    @{ Id = 'home';     Label = 'Home' }
-    @{ Id = 'tweaks';   Label = 'Tweaks' }
-    @{ Id = 'fortnite'; Label = 'Fortnite settings' }
-    @{ Id = 'ping';     Label = 'Server ping' }
-    @{ Id = 'startup';  Label = 'Startup apps' }
-    @{ Id = 'apps';     Label = 'Background apps' }
-    @{ Id = 'tools';    Label = 'Tools' }
+$TWEAK_GROUPS = @(
+    @{ Id = 'perf';  Group = 'Performance';        Title = 'Performance';      Sub = 'Windows settings that keep your FPS high and steady.' }
+    @{ Id = 'net';   Group = 'Network';            Title = 'Network';          Sub = 'Settings that cut lag spikes. They cannot lower your base ping, which depends on distance to the server.' }
+    @{ Id = 'input'; Group = 'Mouse and keyboard'; Title = 'Mouse and keyboard'; Sub = 'Settings that make your aim and keys respond the same way every time.' }
+)
+$NAV = @(
+    @{ Id = 'home';     Label = 'Dashboard';         Icon = [char]0xE80F }
+    @{ Section = 'Tweaks' }
+    @{ Id = 'perf';     Label = 'Performance';       Icon = [char]0xE945; Group = 'Performance' }
+    @{ Id = 'net';      Label = 'Network';           Icon = [char]0xE701; Group = 'Network' }
+    @{ Id = 'input';    Label = 'Mouse and keyboard'; Icon = [char]0xE765; Group = 'Mouse and keyboard' }
+    @{ Section = 'Fortnite' }
+    @{ Id = 'fortnite'; Label = 'Game settings';     Icon = [char]0xE7FC }
+    @{ Id = 'ping';     Label = 'Server ping';       Icon = [char]0xE839 }
+    @{ Section = 'System' }
+    @{ Id = 'startup';  Label = 'Startup apps';      Icon = [char]0xE7E8 }
+    @{ Id = 'apps';     Label = 'Background apps';   Icon = [char]0xE71D }
+    @{ Id = 'tools';    Label = 'Tools';             Icon = [char]0xE90F }
 )
 $Pages = @{}; $Bodies = @{}; $NavButtons = @{}
 $PagesGrid = W 'Pages'
-foreach ($p in $PAGE_DEFS) {
+$NavList = W 'NavList'
+foreach ($n in $NAV) {
+    if ($n.Section) {
+        $h = New-Text $n.Section.ToUpper() 10 $C.Dim 'Bold'
+        $h.Margin = T 12 14 0 4
+        [void]$NavList.Children.Add($h)
+        continue
+    }
     $sv = New-Object Windows.Controls.ScrollViewer
     $sv.VerticalScrollBarVisibility = 'Auto'
     $sv.Visibility = 'Collapsed'
     $body = New-Object Windows.Controls.StackPanel
-    $body.Margin = T 36 0 30 28
-    $body.MaxWidth = 980
+    $body.Margin = T 28 22 26 24
+    $body.MaxWidth = 1000
     $sv.Content = $body
     [void]$PagesGrid.Children.Add($sv)
-    $Pages[$p.Id] = $sv; $Bodies[$p.Id] = $body
+    $Pages[$n.Id] = $sv; $Bodies[$n.Id] = $body
+
+    $g = New-Object Windows.Controls.Grid
+    $gc1 = New-Object Windows.Controls.ColumnDefinition; $gc1.Width = New-Object Windows.GridLength 26
+    $gc2 = New-Object Windows.Controls.ColumnDefinition; $gc2.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
+    $gc3 = New-Object Windows.Controls.ColumnDefinition; $gc3.Width = [Windows.GridLength]::Auto
+    $g.ColumnDefinitions.Add($gc1); $g.ColumnDefinitions.Add($gc2); $g.ColumnDefinitions.Add($gc3)
+    $ic = New-Object Windows.Controls.TextBlock
+    $ic.Text = [string]$n.Icon
+    $ic.FontFamily = New-Object Windows.Media.FontFamily 'Segoe Fluent Icons, Segoe MDL2 Assets'
+    $ic.FontSize = 14; $ic.VerticalAlignment = 'Center'
+    [void]$g.Children.Add($ic)
+    $lb = New-Object Windows.Controls.TextBlock
+    $lb.Text = $n.Label; $lb.VerticalAlignment = 'Center'
+    [Windows.Controls.Grid]::SetColumn($lb, 1)
+    [void]$g.Children.Add($lb)
+    if ($n.Group) {
+        $cnt = @($Tweaks | Where-Object { $_.Group -eq $n.Group }).Count
+        $bd = New-Text "$cnt" 11 $C.Dim 'SemiBold'
+        $bd.VerticalAlignment = 'Center'
+        [Windows.Controls.Grid]::SetColumn($bd, 2)
+        [void]$g.Children.Add($bd)
+    }
 
     $nb = New-Object Windows.Controls.RadioButton
     $nb.Style = $window.FindResource('Nav')
     $nb.GroupName = 'nav'
-    $nb.Content = $p.Label
-    $nb.Tag = $p.Id
+    $nb.Content = $g
+    $nb.Tag = $n.Id
     $nb.Add_Checked({ param($s, $e) Show-Page $s.Tag })
-    [void](W 'NavList').Children.Add($nb)
-    $NavButtons[$p.Id] = $nb
+    [void]$NavList.Children.Add($nb)
+    $NavButtons[$n.Id] = $nb
 }
 $script:Built = @{}
 function Go-Page($id) { if ($NavButtons[$id].IsChecked) { Show-Page $id } else { $NavButtons[$id].IsChecked = $true } }
 function Show-Page($id) {
     foreach ($k in $Pages.Keys) { $Pages[$k].Visibility = if ($k -eq $id) { 'Visible' } else { 'Collapsed' } }
     $Pages[$id].ScrollToTop()
-    $always = @('home', 'apps', 'startup', 'fortnite')
+    $always = @('home', 'apps', 'startup', 'fortnite', 'perf', 'net', 'input')
     if (-not $script:Built[$id] -or ($always -contains $id)) {
         $window.Cursor = [Windows.Input.Cursors]::Wait
-        try { & "Build-$id" } catch { Set-Status "Couldn't load this page: $($_.Exception.Message)" 'err' }
+        try {
+            if ($TWEAK_GROUPS | Where-Object { $_.Id -eq $id }) { Build-TweakPage $id } else { & "Build-$id" }
+        } catch { Set-Status "Couldn't load this page: $($_.Exception.Message)" 'err' }
         $window.Cursor = $null
         $script:Built[$id] = $true
     }
@@ -1029,8 +1172,8 @@ function Get-Specs {
 }
 $script:Specs = Get-Specs
 
-# ---------- Tweaks page ----------
-$script:Switches = @()
+
+# ---------- Tweaks ----------
 function Get-TweakState($t) {
     $ok = $true
     if ($t.Available) { $ok = [bool](& $t.Available) }
@@ -1040,90 +1183,149 @@ function Get-TweakState($t) {
 }
 function Get-TweakCounts {
     $on = 0; $total = 0
-    foreach ($t in $Tweaks) { $s = Get-TweakState $t; if ($s.Available) { $total++; if ($s.On) { $on++ } } }
+    foreach ($t in $Tweaks) { $st = Get-TweakState $t; if ($st.Available) { $total++; if ($st.On) { $on++ } } }
     @{ On = $on; Total = $total }
 }
+function Update-TweakSummary {
+    $counts = Get-TweakCounts
+    (W 'SideCount').Text = "$($counts.On) of $($counts.Total)"
+    $pct = if ($counts.Total) { $counts.On / $counts.Total } else { 0 }
+    (W 'SideBar').Width = [math]::Max(0, 178 * $pct)
+}
+function New-RestorePoint {
+    Set-Status 'Creating a restore point. This can take up to a minute...'
+    try {
+        Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
+        Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' 'SystemRestorePointCreationFrequency' 0
+        Checkpoint-Computer -Description "Before vzc1's optimizations" -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
+        Set-Status 'Restore point created.' 'ok'
+        return $true
+    } catch { Set-Status "Couldn't create a restore point: $($_.Exception.Message)" 'err'; return $false }
+}
 function Enable-AllTweaks {
+    if ((W 'AutoRestore').IsChecked) { [void](New-RestorePoint) }
     $fails = @(); $reboot = $false
     foreach ($t in $Tweaks) {
-        $s = Get-TweakState $t
-        if (-not $s.Available -or $s.On) { continue }
+        $st = Get-TweakState $t
+        if (-not $st.Available -or $st.On) { continue }
         Set-Status "Turning on: $($t.Name)..."
         try { & $t.On; if ($t.Reboot) { $reboot = $true } } catch { $fails += $t.Name }
     }
     if ($fails.Count) { Set-Status ("Turned on everything except: " + ($fails -join ', ')) 'err' }
     elseif ($reboot) { Set-Status 'All tweaks on. Restart your PC so GPU scheduling takes effect.' 'ok' }
     else { Set-Status 'All tweaks on.' 'ok' }
-}
-function Update-TweakSummary {
-    if ($script:TweakSummary) {
-        $c = Get-TweakCounts
-        $script:TweakSummary.Text = "$($c.On) of $($c.Total) on"
-    }
-}
-
-function Build-tweaks {
-    $body = $Bodies['tweaks']; $body.Children.Clear()
-    $right = New-Object Windows.Controls.StackPanel
-    $right.Orientation = 'Horizontal'
-    $script:TweakSummary = New-Text '' 15 $C.Muted -Head
-    $script:TweakSummary.VerticalAlignment = 'Center'; $script:TweakSummary.Margin = T 0 0 16 0
-    [void]$right.Children.Add($script:TweakSummary)
-    [void]$right.Children.Add((New-Button 'Turn on all' -Primary {
-        Enable-AllTweaks
-        $script:Built['tweaks'] = $false; Show-Page 'tweaks'
-    }))
-    Add-PageHeader $body 'Tweaks' 'Windows settings that help Fortnite run smoother. Switch any of them off again to undo it.' $right
-
-    foreach ($grp in @('Performance', 'Network', 'Mouse and keyboard')) {
-        Add-Heading $body $grp
-        $panel = New-Panel
-        foreach ($t in ($Tweaks | Where-Object { $_.Group -eq $grp })) {
-            $st = Get-TweakState $t
-            $sw = New-Switch $st.On
-            $sw.IsEnabled = $st.Available
-            $sw.Tag = $t
-            $sw.Add_Click({
-                param($s, $e)
-                $t = $s.Tag
-                $want = [bool]$s.IsChecked
-                try {
-                    if ($want) { & $t.On } else { & $t.Off }
-                    $msg = "$($t.Name) " + $(if ($want) { 'on.' } else { 'off.' })
-                    if ($t.Reboot) { $msg += ' Restart your PC for it to take effect.' }
-                    Set-Status $msg 'ok'
-                } catch { Set-Status "$($t.Name) didn't change: $($_.Exception.Message)" 'err' }
-                try { $s.IsChecked = [bool](& $t.Get) } catch { }
-                Update-TweakSummary
-            })
-            $desc = $t.Desc
-            if (-not $st.Available) {
-                $desc += $(if ($t.Id -eq 'gpu') { ' Fortnite install not found.' } else { ' Not available on this PC.' })
-            }
-            Add-PanelItem $panel (New-Row $t.Name $desc $sw)
-        }
-        [void]$body.Children.Add($panel)
-    }
     Update-TweakSummary
 }
+(W 'SideAll').Add_Click({
+    Enable-AllTweaks
+    foreach ($k in @($script:Built.Keys)) { $script:Built[$k] = $false }
+    foreach ($k in $Pages.Keys) { if ($Pages[$k].Visibility -eq 'Visible') { Show-Page $k } }
+})
 
-# ---------- Home page ----------
+function Build-TweakPage($id) {
+    $grp = $TWEAK_GROUPS | Where-Object { $_.Id -eq $id }
+    $body = $Bodies[$id]; $body.Children.Clear()
+    $list = @($Tweaks | Where-Object { $_.Group -eq $grp.Group })
+    $onHere = @($list | Where-Object { (Get-TweakState $_).On }).Count
+    $right = New-Object Windows.Controls.StackPanel
+    $right.Orientation = 'Horizontal'
+    $sum = New-Text "$onHere of $($list.Count) on" 13 $C.Muted 'SemiBold'
+    $sum.VerticalAlignment = 'Center'; $sum.Margin = T 0 0 14 0
+    [void]$right.Children.Add($sum)
+    $allBtn = New-Button 'Turn all on' -Primary {
+        param($s, $e)
+        foreach ($t in $s.Tag) { $st = Get-TweakState $t; if ($st.Available -and -not $st.On) { try { & $t.On } catch { } } }
+        Set-Status 'Done.' 'ok'
+        Update-TweakSummary
+        Show-Page $script:CurrentTweakPage
+    }
+    $allBtn.Tag = $list
+    $script:CurrentTweakPage = $id
+    [void]$right.Children.Add($allBtn)
+    Add-PageHeader $body $grp.Title $grp.Sub $right
+
+    $panel = New-Panel "$($grp.Title) tweaks"
+    foreach ($t in $list) {
+        $st = Get-TweakState $t
+        $sw = New-Switch $st.On
+        $sw.IsEnabled = $st.Available
+        $sw.Tag = $t
+        $sw.Add_Click({
+            param($s, $e)
+            $t = $s.Tag
+            $want = [bool]$s.IsChecked
+            try {
+                if ($want) { & $t.On } else { & $t.Off }
+                $msg = "$($t.Name) " + $(if ($want) { 'on.' } else { 'off.' })
+                if ($t.Reboot) { $msg += ' Restart your PC for it to take effect.' }
+                Set-Status $msg 'ok'
+            } catch { Set-Status "$($t.Name) didn't change: $($_.Exception.Message)" 'err' }
+            try { $s.IsChecked = [bool](& $t.Get) } catch { }
+            Update-TweakSummary
+        })
+        $desc = $t.Desc
+        if (-not $st.Available) { $desc += $(if ($t.Id -eq 'gpu') { ' Fortnite install not found.' } else { ' Not available on this PC.' }) }
+        Add-PanelItem $panel (New-Row $t.Name $desc $sw)
+    }
+    [void]$body.Children.Add($panel)
+}
+
+# ---------- Live CPU and memory ----------
+$script:CpuCounter = $null
+try { $script:CpuCounter = New-Object System.Diagnostics.PerformanceCounter 'Processor Information', '% Processor Utility', '_Total'; [void]$script:CpuCounter.NextValue() } catch {
+    try { $script:CpuCounter = New-Object System.Diagnostics.PerformanceCounter 'Processor', '% Processor Time', '_Total'; [void]$script:CpuCounter.NextValue() } catch { $script:CpuCounter = $null }
+}
+$script:CompInfo = New-Object Microsoft.VisualBasic.Devices.ComputerInfo
+$script:CpuHist = New-Object System.Collections.ArrayList
+$LIVE_N = 60
+function Read-Live {
+    $cpu = 0
+    if ($script:CpuCounter) { try { $cpu = [math]::Min(100, [math]::Round($script:CpuCounter.NextValue())) } catch { } }
+    [void]$script:CpuHist.Add($cpu)
+    while ($script:CpuHist.Count -gt $LIVE_N) { $script:CpuHist.RemoveAt(0) }
+    $totalMem = [double]$script:CompInfo.TotalPhysicalMemory
+    $freeMem = [double]$script:CompInfo.AvailablePhysicalMemory
+    @{ Cpu = $cpu; MemUsed = $totalMem - $freeMem; MemTotal = $totalMem }
+}
+function Update-LiveChart {
+    if (-not $script:LiveCanvas) { return }
+    $live = Read-Live
+    $script:LiveCpu.Text = "$($live.Cpu)%"
+    $script:LiveMem.Text = "{0:0.0} / {1:0} GB" -f ($live.MemUsed / 1GB), ($live.MemTotal / 1GB)
+    $w = $script:LiveCanvas.ActualWidth; $h = $script:LiveCanvas.ActualHeight
+    if ($w -le 0 -or $h -le 0) { return }
+    $pts = New-Object Windows.Media.PointCollection
+    $fill = New-Object Windows.Media.PointCollection
+    $n = $script:CpuHist.Count
+    $step = $w / ($LIVE_N - 1)
+    $x0 = $w - ($n - 1) * $step
+    [void]$fill.Add((New-Object Windows.Point $x0, $h))
+    for ($i = 0; $i -lt $n; $i++) {
+        $p = New-Object Windows.Point ($x0 + $i * $step), ($h - ($script:CpuHist[$i] / 100.0) * ($h - 4) - 2)
+        [void]$pts.Add($p); [void]$fill.Add($p)
+    }
+    [void]$fill.Add((New-Object Windows.Point $w, $h))
+    $script:LiveLine.Points = $pts
+    $script:LiveArea.Points = $fill
+}
+
+# ---------- Dashboard ----------
 function Get-Checks {
     $checks = @()
 
     $ri = $null; try { $ri = [Vz.Native]::RefreshInfo() } catch { }
     if ($ri) {
-        $w = $ri[0]; $h = $ri[1]; $cur = $ri[2]; $max = $ri[3]
+        $cur = $ri[2]; $max = $ri[3]
         $script:MonitorHz = $max
         if ($cur -lt $max) {
             $checks += @{ State = 'bad'; Title = "Your monitor is running at $cur Hz"
                 Detail = "It supports $max Hz. Windows often leaves new monitors on 60 Hz. Higher means smoother aim and less delay."
                 Action = "Switch to $max Hz"; Do = {
                     $r = [Vz.Native]::SetRefresh($script:MonitorHz)
-                    if ($r -eq 0) { Set-Status "Monitor switched to $($script:MonitorHz) Hz." 'ok' } else { Set-Status "Windows didn't accept $($script:MonitorHz) Hz (code $r). Try it in Settings > Display > Advanced display." 'err' }
+                    if ($r -eq 0) { Set-Status "Monitor switched to $($script:MonitorHz) Hz." 'ok' } else { Set-Status "Windows didn't accept $($script:MonitorHz) Hz (code $r). Try Settings > Display > Advanced display." 'err' }
                 } }
         } else {
-            $checks += @{ State = 'good'; Title = "Monitor at its max refresh rate"; Detail = "$cur Hz at $w x $h." }
+            $checks += @{ State = 'good'; Title = 'Monitor at its max refresh rate'; Detail = "$cur Hz at $($ri[0]) x $($ri[1])." }
         }
     }
 
@@ -1134,7 +1336,7 @@ function Get-Checks {
         $checks += @{ State = 'bad'; Title = 'Running on battery'; Detail = 'Laptops cut performance hard on battery. Plug in your charger before you play.' }
     } elseif (-not (Get-TweakState $powerTweak).On) {
         $checks += @{ State = 'warn'; Title = "Power plan isn't on max performance"; Detail = 'Your CPU slows down between frames to save power, which shows up as FPS dips.'
-            Action = 'Turn on'; Do = { try { & ($Tweaks | Where-Object { $_.Id -eq 'power' }).On; Set-Status 'Max performance power plan on.' 'ok' } catch { Set-Status $_.Exception.Message 'err' } } }
+            Action = 'Turn on'; Do = { try { & ($Tweaks | Where-Object { $_.Id -eq 'power' }).On; Set-Status 'Max performance power plan on.' 'ok'; Update-TweakSummary } catch { Set-Status $_.Exception.Message 'err' } } }
     } else {
         $checks += @{ State = 'good'; Title = 'Max performance power plan'; Detail = 'Your CPU stays at full speed.' }
     }
@@ -1184,33 +1386,87 @@ function Get-Checks {
     $checks
 }
 
+function New-SpecCard($label, $value, $sub) {
+    $card = New-Object Windows.Controls.Border
+    $card.Background = B $C.Panel
+    $card.BorderBrush = B $C.Line
+    $card.BorderThickness = T 1 1 1 1
+    $card.CornerRadius = New-Object Windows.CornerRadius 12
+    $card.Padding = T 16 13 16 13
+    $card.Margin = T 0 0 12 12
+    $sp = New-Object Windows.Controls.StackPanel
+    [void]$sp.Children.Add((New-Label $label))
+    $v = New-Text $value 14.5 '#FFFFFF' 'Bold' -Wrap
+    $v.Margin = T 0 6 0 0
+    [void]$sp.Children.Add($v)
+    if ($sub) { $s = New-Text $sub 12 $C.Muted -Wrap; $s.Margin = T 0 2 0 0; [void]$sp.Children.Add($s) }
+    $card.Child = $sp
+    $card
+}
+
 function Build-home {
     $body = $Bodies['home']; $body.Children.Clear()
     $checks = @(Get-Checks)
     $good = @($checks | Where-Object { $_.State -eq 'good' }).Count
+    $left = $checks.Count - $good
+    $sub = if ($left -eq 0) { "Everything checks out. Go play." } elseif ($left -eq 1) { '1 thing to fix before you play.' } else { "$left things to fix before you play." }
+    Add-PageHeader $body 'Dashboard' $sub
 
-    $score = New-Object Windows.Controls.StackPanel
-    $score.Orientation = 'Horizontal'
-    $big = New-Text "$good/$($checks.Count)" 54 $(if ($good -eq $checks.Count) { $C.Good } else { $C.Accent }) 'Bold' -Head
-    $big.Margin = T 0 0 0 -8
-    [void]$score.Children.Add($big)
-    $sub = $(if ($good -eq $checks.Count) { "You're set. Go play." } elseif ($checks.Count - $good -eq 1) { '1 thing to fix before you play.' } else { "$($checks.Count - $good) things to fix before you play." })
-    Add-PageHeader $body 'Ready to play?' $sub $score
+    # Live monitor
+    $live = New-Panel 'Live system'
+    $lg = New-Object Windows.Controls.Grid
+    $lg.Margin = T 18 6 18 16
+    $l1 = New-Object Windows.Controls.ColumnDefinition; $l1.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
+    $l2 = New-Object Windows.Controls.ColumnDefinition; $l2.Width = [Windows.GridLength]::Auto
+    $lg.ColumnDefinitions.Add($l1); $lg.ColumnDefinitions.Add($l2)
+    $chartHost = New-Object Windows.Controls.Grid
+    $chartHost.Height = 90
+    foreach ($y in 0.25, 0.5, 0.75) {
+        $gl = New-Object Windows.Controls.Border
+        $gl.Height = 1; $gl.Background = B '#1F1915'; $gl.VerticalAlignment = 'Top'
+        $gl.Margin = T 0 (90 * $y) 0 0
+        [void]$chartHost.Children.Add($gl)
+    }
+    $script:LiveCanvas = New-Object Windows.Controls.Canvas
+    $script:LiveCanvas.ClipToBounds = $true
+    $script:LiveArea = New-Object Windows.Shapes.Polygon
+    $areaBrush = New-Object Windows.Media.LinearGradientBrush
+    $areaBrush.StartPoint = New-Object Windows.Point 0, 0; $areaBrush.EndPoint = New-Object Windows.Point 0, 1
+    $areaBrush.GradientStops.Add((New-Object Windows.Media.GradientStop ([Windows.Media.Color]::FromArgb(110, 255, 122, 26)), 0))
+    $areaBrush.GradientStops.Add((New-Object Windows.Media.GradientStop ([Windows.Media.Color]::FromArgb(0, 255, 122, 26)), 1))
+    $script:LiveArea.Fill = $areaBrush
+    $script:LiveLine = New-Object Windows.Shapes.Polyline
+    $script:LiveLine.Stroke = B $C.Accent
+    $script:LiveLine.StrokeThickness = 2
+    $script:LiveLine.StrokeLineJoin = 'Round'
+    [void]$script:LiveCanvas.Children.Add($script:LiveArea)
+    [void]$script:LiveCanvas.Children.Add($script:LiveLine)
+    [void]$chartHost.Children.Add($script:LiveCanvas)
+    [void]$lg.Children.Add($chartHost)
 
-    $grid = New-Object Windows.Controls.Grid
-    $c1 = New-Object Windows.Controls.ColumnDefinition; $c1.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
-    $c2 = New-Object Windows.Controls.ColumnDefinition; $c2.Width = New-Object Windows.GridLength 290
-    $grid.ColumnDefinitions.Add($c1); $grid.ColumnDefinitions.Add($c2)
+    $nums = New-Object Windows.Controls.StackPanel
+    $nums.Margin = T 24 0 0 0
+    $nums.VerticalAlignment = 'Center'
+    $script:LiveCpu = New-Text '--' 34 '#FFFFFF' 'Bold' -Head
+    $script:LiveCpu.HorizontalAlignment = 'Right'
+    $cl = New-Text 'CPU LOAD' 10 $C.Dim 'Bold'; $cl.HorizontalAlignment = 'Right'
+    $script:LiveMem = New-Text '--' 16 '#FFFFFF' 'Bold' -Head
+    $script:LiveMem.HorizontalAlignment = 'Right'; $script:LiveMem.Margin = T 0 12 0 0
+    $ml = New-Text 'MEMORY IN USE' 10 $C.Dim 'Bold'; $ml.HorizontalAlignment = 'Right'
+    foreach ($el in $script:LiveCpu, $cl, $script:LiveMem, $ml) { [void]$nums.Children.Add($el) }
+    [Windows.Controls.Grid]::SetColumn($nums, 1)
+    [void]$lg.Children.Add($nums)
+    $live.Child.Children.Add($lg) | Out-Null
+    [void]$body.Children.Add($live)
 
-    $panel = New-Panel
-    $panel.Margin = T 0 0 18 0
-    $panel.VerticalAlignment = 'Top'
+    # Checklist
+    $panel = New-Panel 'Ready to play'
     $order = @{ bad = 0; warn = 1; good = 2 }
     foreach ($ck in ($checks | Sort-Object { $order[$_.State] })) {
         $color = switch ($ck.State) { 'good' { $C.Good } 'warn' { $C.Warn } default { $C.Bad } }
         $btn = $null
         if ($ck.Action) {
-            $btn = New-Button $ck.Action -Primary:($ck.State -eq 'bad') {
+            $btn = New-Button $ck.Action -Primary:($ck.State -ne 'good') {
                 param($s, $e)
                 & $s.Tag.Do
                 if (-not $s.Tag.NoRefresh) { Show-Page 'home' }
@@ -1219,31 +1475,31 @@ function Build-home {
         }
         Add-PanelItem $panel (New-Row $ck.Title $ck.Detail $btn (New-Dot $color))
     }
-    [void]$grid.Children.Add($panel)
+    [void]$body.Children.Add($panel)
 
-    $specs = New-Panel
-    $specs.VerticalAlignment = 'Top'
-    [Windows.Controls.Grid]::SetColumn($specs, 1)
+    # Spec cards
     $sp = $script:Specs
-    $disp = ''
-    try { $ri = [Vz.Native]::RefreshInfo(); if ($ri) { $disp = "$($ri[0]) x $($ri[1])"; $dispSub = "$($ri[2]) Hz now, up to $($ri[3]) Hz" } } catch { }
-    $rows = @(
-        @('Processor', $sp.Cpu, $sp.CpuSub), @('Graphics', $sp.Gpu, ''), @('Memory', $sp.Ram, $sp.RamSub),
-        @('Display', $disp, $dispSub), @('Windows', $sp.Os, $sp.OsSub),
-        @('Fortnite', $(if ($FN_PATH) { 'Installed' } else { 'Not found' }), $(if (Test-FortniteRunning) { 'Running right now' } else { '' }))
+    $disp = ''; $dispSub = ''
+    try { $ri = [Vz.Native]::RefreshInfo(); if ($ri) { $disp = "$($ri[0]) x $($ri[1]) at $($ri[2]) Hz"; $dispSub = "Supports up to $($ri[3]) Hz" } } catch { }
+    $cards = @(
+        @('Operating system', $sp.Os, $sp.OsSub), @('Processor', $sp.Cpu, $sp.CpuSub),
+        @('Graphics', $sp.Gpu, 'Primary display adapter'), @('Memory', $sp.Ram, $sp.RamSub),
+        @('Display', $disp, $dispSub), @('Fortnite', $(if ($FN_PATH) { 'Installed' } else { 'Not found' }), $(if (Test-FortniteRunning) { 'Running right now' } else { 'Not running' }))
     )
-    foreach ($r in $rows) {
-        $st = New-Object Windows.Controls.StackPanel
-        $st.Margin = T 18 11 18 11
-        [void]$st.Children.Add((New-Text $r[0] 12 $C.Dim))
-        $v = New-Text $r[1] 14 $C.Text 'SemiBold' -Wrap; $v.Margin = T 0 2 0 0
-        [void]$st.Children.Add($v)
-        if ($r[2]) { [void]$st.Children.Add((New-Text $r[2] 12 $C.Muted -Wrap)) }
-        Add-PanelItem $specs $st
-    }
-    [void]$grid.Children.Add($specs)
-    [void]$body.Children.Add($grid)
+    $ug = New-Object Windows.Controls.Primitives.UniformGrid
+    $ug.Columns = 2
+    $ug.Margin = T 0 0 -12 0
+    foreach ($cd in $cards) { [void]$ug.Children.Add((New-SpecCard $cd[0] $cd[1] $cd[2])) }
+    [void]$body.Children.Add($ug)
+
+    $script:CpuHist.Clear()
+    Update-TweakSummary
 }
+
+$liveTimer = New-Object Windows.Threading.DispatcherTimer
+$liveTimer.Interval = [TimeSpan]::FromMilliseconds(1000)
+$liveTimer.Add_Tick({ if ($Pages['home'].Visibility -eq 'Visible') { Update-LiveChart } })
+$liveTimer.Start()
 
 # ---------- Fortnite settings page ----------
 function Build-fortnite {
