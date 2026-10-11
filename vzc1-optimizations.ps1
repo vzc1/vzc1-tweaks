@@ -70,7 +70,8 @@ function Remove-Reg($Path, $Name) {
 
 # ---------- Constants ----------
 $APP_NAME      = "vzc1's optimizations"
-$APP_VERSION   = '4.0'
+$APP_VERSION   = '4.0.0'
+$UPDATE_REPO   = 'vzc1/fortnite-optimizer'
 $GUID_RE       = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}'
 $PLAN_BALANCED = '381b4222-f694-41f0-9685-ff5bb260df2e'
 $PLAN_HIGH     = '8c5e7fda-e8bf-4a96-9a85-cf4dbd8f9e7f'
@@ -853,6 +854,7 @@ Add-Type -AssemblyName Microsoft.VisualBasic
                   <Button x:Name="SideAll" Style="{StaticResource Primary}" Content="TURN ON ALL" Padding="10,8"/>
                 </StackPanel>
               </Border>
+              <Button x:Name="SideUpdate" Style="{StaticResource Btn}" Content="CHECK FOR UPDATES" Padding="10,8" Margin="0,0,0,8"/>
               <Button x:Name="SideExit" Style="{StaticResource Btn}" Content="EXIT" Padding="10,8"/>
             </StackPanel>
 
@@ -1061,7 +1063,7 @@ function Set-Status($msg, $kind = 'info') {
 (W 'BtnMin').Add_Click({ $window.WindowState = 'Minimized' })
 (W 'BtnClose').Add_Click({ $window.Close() })
 (W 'SideExit').Add_Click({ $window.Close() })
-(W 'SideSub').Text = "Free and open source  v$APP_VERSION"
+(W 'SideSub').Text = "Version $APP_VERSION"
 
 function Get-ConnectionType {
     $up = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up'
@@ -1284,6 +1286,110 @@ function Build-TweakPage($id) {
     }
     [void]$body.Children.Add($panel)
 }
+
+# ---------- Updates ----------
+# Checks the latest GitHub release. When running as the exe, downloads the new exe,
+# swaps it in next to the old one, and restarts.
+$upd = [hashtable]::Synchronized(@{ State = 'idle'; Latest = $null; Url = $null; Digest = $null; Page = $null; Error = $null })
+$UpdateWorker = {
+    param($upd, $repo)
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $r = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'vzc1-optimizations'; 'Accept' = 'application/vnd.github+json' } -TimeoutSec 15
+        $asset = @($r.assets | Where-Object { $_.name -eq 'vzc1-optimizations.exe' }) | Select-Object -First 1
+        $upd.Latest = "$($r.tag_name)".TrimStart('v')
+        $upd.Page = $r.html_url
+        if ($asset) { $upd.Url = $asset.browser_download_url; $upd.Digest = $asset.digest }
+        $upd.State = 'done'
+    } catch {
+        $code = $null; try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+        $upd.Error = if ($code -eq 404) { 'private' } else { $_.Exception.Message }
+        $upd.State = 'failed'
+    }
+}
+function Start-UpdateCheck([switch]$Quiet) {
+    if ($upd.State -eq 'checking') { return }
+    $upd.State = 'checking'; $upd.Error = $null; $upd.Latest = $null; $upd.Url = $null
+    $script:UpdQuiet = [bool]$Quiet
+    if (-not $Quiet) { Set-Status 'Checking for updates...' }
+    $rs = [runspacefactory]::CreateRunspace(); $rs.Open()
+    $ps = [powershell]::Create(); $ps.Runspace = $rs
+    [void]$ps.AddScript($UpdateWorker).AddArgument($upd).AddArgument($UPDATE_REPO)
+    [void]$ps.BeginInvoke()
+}
+function Test-NewerVersion($latest) {
+    try { return ([version]$latest) -gt ([version]$APP_VERSION) } catch { return $false }
+}
+function Get-RunningExe {
+    try {
+        $path = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+        if ([IO.Path]::GetFileName($path) -ieq 'vzc1-optimizations.exe') { return $path }
+    } catch { }
+    return $null
+}
+function Install-Update {
+    $exe = Get-RunningExe
+    if (-not $exe) {
+        Set-Status "You're running the script version. Download the new zip from the release page." 'ok'
+        if ($upd.Page) { Start-Process $upd.Page }
+        return
+    }
+    if (-not $upd.Url) { Set-Status "The new release doesn't have an exe yet. Try again in a minute." 'err'; return }
+    $new = "$exe.new"
+    try {
+        Set-Status "Downloading v$($upd.Latest)..."
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $upd.Url -OutFile $new -UseBasicParsing -Headers @{ 'User-Agent' = 'vzc1-optimizations' } -TimeoutSec 120
+        if ($upd.Digest -and $upd.Digest -like 'sha256:*') {
+            $want = $upd.Digest.Substring(7).ToLower()
+            $got = (Get-FileHash -LiteralPath $new -Algorithm SHA256).Hash.ToLower()
+            if ($want -ne $got) { Remove-Item -LiteralPath $new -Force -ErrorAction SilentlyContinue; throw 'The download was corrupted. Nothing was changed.' }
+        }
+        $old = "$exe.old"
+        if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }
+        Move-Item -LiteralPath $exe -Destination $old -Force
+        Move-Item -LiteralPath $new -Destination $exe -Force
+        Set-Status "Updated to v$($upd.Latest). Restarting..." 'ok'
+        Start-Process -FilePath $exe
+        $window.Close()
+    } catch {
+        if ((Test-Path -LiteralPath "$exe.old") -and -not (Test-Path -LiteralPath $exe)) { Move-Item -LiteralPath "$exe.old" -Destination $exe -Force -ErrorAction SilentlyContinue }
+        Set-Status "Update failed: $($_.Exception.Message)" 'err'
+    }
+}
+function Update-UpdateButton {
+    $btn = W 'SideUpdate'
+    if ($upd.Latest -and (Test-NewerVersion $upd.Latest)) {
+        $btn.Content = "UPDATE TO V$($upd.Latest)"
+        $btn.Style = $window.FindResource('Primary')
+    } else {
+        $btn.Content = 'CHECK FOR UPDATES'
+        $btn.Style = $window.FindResource('Btn')
+    }
+}
+(W 'SideUpdate').Add_Click({
+    if ($upd.Latest -and (Test-NewerVersion $upd.Latest)) { Install-Update } else { Start-UpdateCheck }
+})
+$updTimer = New-Object Windows.Threading.DispatcherTimer
+$updTimer.Interval = [TimeSpan]::FromMilliseconds(500)
+$updTimer.Add_Tick({
+    if ($upd.State -eq 'done') {
+        $upd.State = 'shown'
+        Update-UpdateButton
+        if (Test-NewerVersion $upd.Latest) { Set-Status "Version $($upd.Latest) is out. Click Update in the sidebar." 'ok' }
+        elseif (-not $script:UpdQuiet) { Set-Status "You're on the latest version (v$APP_VERSION)." 'ok' }
+    } elseif ($upd.State -eq 'failed') {
+        $upd.State = 'shown'
+        if (-not $script:UpdQuiet) {
+            if ($upd.Error -eq 'private') { Set-Status "Can't see the releases. The GitHub repo is private, so the update check can't reach it." 'err' }
+            else { Set-Status "Couldn't check for updates: $($upd.Error)" 'err' }
+        }
+    }
+})
+$updTimer.Start()
+# Clean up the previous version left behind by an update
+$runningExe = Get-RunningExe
+if ($runningExe -and (Test-Path -LiteralPath "$runningExe.old")) { Remove-Item -LiteralPath "$runningExe.old" -Force -ErrorAction SilentlyContinue }
 
 # ---------- Live CPU and memory ----------
 $script:CpuCounter = $null
@@ -1936,6 +2042,7 @@ function Build-tools {
             Set-Status 'Restore point created.' 'ok'
         } catch { Set-Status "Couldn't create a restore point: $($_.Exception.Message)" 'err' }
     }))
+    Add-PanelItem $panel (New-Row 'Updates' "You're on version $APP_VERSION. Checks GitHub for a newer release and installs it." (New-Button 'Check for updates' { if ($upd.Latest -and (Test-NewerVersion $upd.Latest)) { Install-Update } else { Start-UpdateCheck } }))
     Add-PanelItem $panel (New-Row 'Undo all tweaks' 'Switches every tweak on the Tweaks page back off.' (New-Button 'Undo all' {
         $r = [Windows.MessageBox]::Show('Switch every tweak back off?', $APP_NAME, 'YesNo', 'Question')
         if ($r -ne 'Yes') { return }
@@ -1967,6 +2074,6 @@ $window.Add_Closed({
     $timer.Stop()
     if ($script:Runspace) { try { $script:Runspace.PS.Stop(); $script:Runspace.RS.Close() } catch { } }
 })
-$window.Add_ContentRendered({ Go-Page 'home' })
+$window.Add_ContentRendered({ Go-Page 'home'; Start-UpdateCheck -Quiet })
 
 [void]$window.ShowDialog()

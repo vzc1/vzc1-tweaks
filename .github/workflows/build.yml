@@ -17,6 +17,9 @@ jobs:
       - name: Build vzc1-optimizations.exe
         shell: powershell
         run: |
+          $ps1 = (Get-Content vzc1-optimizations.ps1 -Raw) -replace "\`$APP_VERSION\s+= '[^']*'", "`$APP_VERSION   = '4.0.${{ github.run_number }}'"
+          [IO.File]::WriteAllText("$PWD\vzc1-optimizations.ps1", $ps1)
+          Select-String -Path vzc1-optimizations.ps1 -Pattern '^\$APP_VERSION'
           $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
           $sma = [System.Management.Automation.PSObject].Assembly.Location
           $ver = "4.0.${{ github.run_number }}.0"
