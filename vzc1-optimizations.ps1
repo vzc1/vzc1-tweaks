@@ -618,9 +618,9 @@ $PingWorker = {
             </Grid>
             <ControlTemplate.Triggers>
               <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="Track" Property="Background" Value="#F2A93B"/>
-                <Setter TargetName="Track" Property="BorderBrush" Value="#F2A93B"/>
-                <Setter TargetName="Knob" Property="Background" Value="#1A1407"/>
+                <Setter TargetName="Track" Property="Background" Value="#FF7A1A"/>
+                <Setter TargetName="Track" Property="BorderBrush" Value="#FF7A1A"/>
+                <Setter TargetName="Knob" Property="Background" Value="#1A0C02"/>
                 <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
                 <Setter TargetName="Knob" Property="Margin" Value="0,0,4,0"/>
               </Trigger>
@@ -662,9 +662,9 @@ $PingWorker = {
     </Style>
 
     <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource Btn}">
-      <Setter Property="Foreground" Value="#1A1407"/>
-      <Setter Property="Background" Value="#F2A93B"/>
-      <Setter Property="BorderBrush" Value="#F2A93B"/>
+      <Setter Property="Foreground" Value="#1A0C02"/>
+      <Setter Property="Background" Value="#FF7A1A"/>
+      <Setter Property="BorderBrush" Value="#FF7A1A"/>
     </Style>
 
     <Style x:Key="Seg" TargetType="RadioButton">
@@ -682,9 +682,9 @@ $PingWorker = {
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#2C3036"/></Trigger>
               <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="B" Property="Background" Value="#F2A93B"/>
-                <Setter TargetName="B" Property="BorderBrush" Value="#F2A93B"/>
-                <Setter Property="Foreground" Value="#1A1407"/>
+                <Setter TargetName="B" Property="Background" Value="#FF7A1A"/>
+                <Setter TargetName="B" Property="BorderBrush" Value="#FF7A1A"/>
+                <Setter Property="Foreground" Value="#1A0C02"/>
               </Trigger>
               <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#ECEEF0"/></Trigger>
             </ControlTemplate.Triggers>
@@ -708,7 +708,7 @@ $PingWorker = {
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="#ECEEF0"/></Trigger>
               <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="Bar" Property="Fill" Value="#F2A93B"/>
+                <Setter TargetName="Bar" Property="Fill" Value="#FF7A1A"/>
                 <Setter TargetName="G" Property="Background" Value="#1B1E22"/>
                 <Setter Property="Foreground" Value="#FFFFFF"/>
               </Trigger>
@@ -753,7 +753,7 @@ $PingWorker = {
         <DockPanel>
           <StackPanel x:Name="Logo" DockPanel.Dock="Top" Margin="22,26,16,30" Background="Transparent">
             <TextBlock Text="vzc1" FontFamily="Bahnschrift" FontWeight="Bold" FontSize="34" Foreground="#FFFFFF" Margin="0,0,0,-6"/>
-            <TextBlock Text="optimizations" FontFamily="{StaticResource Head}" FontSize="17" Foreground="#F2A93B"/>
+            <TextBlock Text="optimizations" FontFamily="{StaticResource Head}" FontSize="17" Foreground="#FF7A1A"/>
           </StackPanel>
           <StackPanel DockPanel.Dock="Bottom" Margin="22,0,16,18">
             <TextBlock x:Name="SideConn" FontSize="12" Foreground="#9BA1A8"/>
@@ -795,7 +795,7 @@ function W($name) { $window.FindName($name) }
 $C = @{
     Bg = '#16181B'; Panel = '#1D2024'; Panel2 = '#23272C'; Line = '#2C3036'
     Text = '#ECEEF0'; Muted = '#9BA1A8'; Dim = '#6C727A'
-    Accent = '#F2A93B'; OnAccent = '#1A1407'; Good = '#5BD38A'; Warn = '#F2C94C'; Bad = '#EF6461'
+    Accent = '#FF7A1A'; OnAccent = '#1A0C02'; Good = '#5BD38A'; Warn = '#F2C94C'; Bad = '#EF6461'
 }
 $HeadFont = $window.FindResource('Head')
 $bc = New-Object Windows.Media.BrushConverter
