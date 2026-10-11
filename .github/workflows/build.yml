@@ -14,6 +14,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check the app loads on Windows
+        shell: powershell
+        run: |
+          $src = Get-Content vzc1-optimizations.ps1 -Raw
+          # Syntax
+          $errs = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$null, [ref]$errs)
+          if ($errs.Count) { $errs | ForEach-Object { Write-Host $_ }; throw 'Script has syntax errors' }
+          # Native Windows code compiles and runs
+          $m = [regex]::Match($src, "-MemberDefinition @'\r?\n(.*?)\r?\n'@", 'Singleline')
+          Add-Type -Namespace Vz -Name Native -MemberDefinition $m.Groups[1].Value
+          [void][Vz.Native]::CpuPercent(); Start-Sleep -Milliseconds 300
+          Write-Host "CPU now: $([Vz.Native]::CpuPercent())%"
+          # Window layout loads in WPF
+          Add-Type -AssemblyName PresentationFramework
+          $x = [regex]::Match($src, "\[xml\]\`$xaml = @'\r?\n(.*?)\r?\n'@", 'Singleline')
+          [xml]$xml = $x.Groups[1].Value
+          $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xml))
+          foreach ($k in 'Switch','Check','Btn','Primary','Seg','Nav','ChromeBtn') { [void]$win.FindResource($k) }
+          Write-Host 'Window layout OK'
+
       - name: Build vzc1-optimizations.exe
         shell: powershell
         run: |

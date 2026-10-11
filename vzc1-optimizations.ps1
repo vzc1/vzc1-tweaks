@@ -47,6 +47,22 @@ public static int[] RefreshInfo() {
     return new int[] { cur.dmPelsWidth, cur.dmPelsHeight, cur.dmDisplayFrequency, max };
 }
 
+[DllImport("kernel32.dll", SetLastError = true)]
+static extern bool GetSystemTimes(out long idleTime, out long kernelTime, out long userTime);
+static long lastIdle = 0, lastTotal = 0;
+
+// CPU use since the last call, 0-100. Kernel time includes idle time, so busy = total - idle.
+public static int CpuPercent() {
+    long idle, kernel, user;
+    if (!GetSystemTimes(out idle, out kernel, out user)) return -1;
+    long total = kernel + user;
+    long dIdle = idle - lastIdle, dTotal = total - lastTotal;
+    lastIdle = idle; lastTotal = total;
+    if (dTotal <= 0) return 0;
+    int pct = (int)Math.Round(100.0 * (dTotal - dIdle) / dTotal);
+    return Math.Max(0, Math.Min(100, pct));
+}
+
 public static int SetRefresh(int hz) {
     DEVMODE cur = NewMode();
     if (!EnumDisplaySettings(null, -1, ref cur)) return -1;
@@ -1398,16 +1414,13 @@ $runningExe = Get-RunningExe
 if ($runningExe -and (Test-Path -LiteralPath "$runningExe.old")) { Remove-Item -LiteralPath "$runningExe.old" -Force -ErrorAction SilentlyContinue }
 
 # ---------- Live CPU and memory ----------
-$script:CpuCounter = $null
-try { $script:CpuCounter = New-Object System.Diagnostics.PerformanceCounter 'Processor Information', '% Processor Utility', '_Total'; [void]$script:CpuCounter.NextValue() } catch {
-    try { $script:CpuCounter = New-Object System.Diagnostics.PerformanceCounter 'Processor', '% Processor Time', '_Total'; [void]$script:CpuCounter.NextValue() } catch { $script:CpuCounter = $null }
-}
+try { [void][Vz.Native]::CpuPercent() } catch { }
 $script:CompInfo = New-Object Microsoft.VisualBasic.Devices.ComputerInfo
 $script:CpuHist = New-Object System.Collections.ArrayList
 $LIVE_N = 60
 function Read-Live {
     $cpu = 0
-    if ($script:CpuCounter) { try { $cpu = [math]::Min(100, [math]::Round($script:CpuCounter.NextValue())) } catch { } }
+    try { $v = [Vz.Native]::CpuPercent(); if ($v -ge 0) { $cpu = $v } } catch { }
     [void]$script:CpuHist.Add($cpu)
     while ($script:CpuHist.Count -gt $LIVE_N) { $script:CpuHist.RemoveAt(0) }
     $totalMem = [double]$script:CompInfo.TotalPhysicalMemory
