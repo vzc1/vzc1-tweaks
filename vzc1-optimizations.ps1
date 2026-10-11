@@ -797,7 +797,7 @@ $C = @{
     Text = '#ECEEF0'; Muted = '#9BA1A8'; Dim = '#6C727A'
     Accent = '#F2A93B'; OnAccent = '#1A1407'; Good = '#5BD38A'; Warn = '#F2C94C'; Bad = '#EF6461'
 }
-$HEAD = $window.FindResource('Head')
+$HeadFont = $window.FindResource('Head')
 $bc = New-Object Windows.Media.BrushConverter
 $BrushCache = @{}
 function B($hex) {
@@ -811,7 +811,7 @@ function New-Text($text, $size = 13, $color = $C.Text, $weight = 'Normal', [swit
     $t = New-Object Windows.Controls.TextBlock
     $t.Text = $text; $t.FontSize = $size; $t.Foreground = B $color
     $t.FontWeight = [Windows.FontWeights]::$weight
-    if ($Head) { $t.FontFamily = $HEAD }
+    if ($Head) { $t.FontFamily = $HeadFont }
     if ($Wrap) { $t.TextWrapping = 'Wrap' }
     $t
 }
@@ -1283,6 +1283,12 @@ function Build-fortnite {
         Fps = New-Switch ((& $g 'bShowFPS') -eq 'True')
     }
     $F = $script:Fn
+    $script:FnPro = $false
+
+    $pro = New-Panel
+    $pro.BorderBrush = B $C.Accent
+    Add-PanelItem $pro (New-Row 'Pro preset' 'What most top-earning Fortnite pros run: Performance mode, fullscreen, Reflex On + Boost, FPS capped at your monitor, 3D resolution 100%, and view distance, meshes, textures, effects and post-processing on low with shadows and anti-aliasing off. Pick it, then press Apply to Fortnite.' (New-Button 'Use pro preset' -Primary { Set-FortnitePro }))
+    [void]$body.Children.Add($pro)
 
     Add-Heading $body 'Display'
     $p1 = New-Panel
@@ -1321,6 +1327,13 @@ function Build-fortnite {
     [void]$body.Children.Add($bar)
 }
 
+function Set-FortnitePro {
+    Set-FortniteRecommended
+    Set-SegValue $script:Fn.Mode 'perf'
+    $script:FnPro = $true
+    Set-Status 'Pro preset picked: Performance mode, low settings, Reflex On + Boost, FPS capped at your monitor. Press Apply to Fortnite to save it.'
+}
+
 function Set-FortniteRecommended {
     $F = $script:Fn
     $hz = $script:MonitorHz
@@ -1331,6 +1344,7 @@ function Set-FortniteRecommended {
     Set-SegValue $F.Win '0'
     Set-SegValue $F.Reflex '2'
     foreach ($k in 'VSync', 'Blur', 'Shadows', 'Grass', 'Nanite', 'RT', 'Fps') { $F[$k].IsChecked = $true }
+    $script:FnPro = $false
     Set-Status "Recommended settings picked. Rendering mode is left as you had it. Press Apply to Fortnite to save them."
 }
 
@@ -1359,6 +1373,13 @@ function Save-FortniteSettings {
         Set-IniValue $lines $FN_SEC 'bShowFPS' (& $tf ([bool]$F.Fps.IsChecked))
         if ($F.Shadows.IsChecked) { Set-IniValue $lines 'ScalabilityGroups' 'sg.ShadowQuality' '0' }
         if ($F.RT.IsChecked) { Set-IniValue $lines 'RayTracing' 'r.RayTracing.EnableInGame' 'False' }
+        if ($script:FnPro) {
+            Set-IniValue $lines 'ScalabilityGroups' 'sg.ResolutionQuality' '100'
+            foreach ($k in 'sg.ViewDistanceQuality', 'sg.AntiAliasingQuality', 'sg.TextureQuality', 'sg.EffectsQuality', 'sg.PostProcessQuality', 'sg.FoliageQuality', 'sg.GlobalIlluminationQuality', 'sg.ReflectionQuality') {
+                Set-IniValue $lines 'ScalabilityGroups' $k '0'
+            }
+            Set-IniValue $lines 'PerformanceMode' 'MeshQuality' '0'
+        }
         Save-IniLines $lines
         Set-Status 'Saved. Your new settings load the next time you start Fortnite.' 'ok'
         $script:Built['fortnite'] = $false

@@ -24,7 +24,7 @@ If Windows shows "Windows protected your PC", click **More info**, then **Run an
 - Network card power saving off, update sharing off, network throttling off
 - Mouse acceleration off, Sticky Keys shortcut off
 
-**Fortnite settings** edits Fortnite's own settings file: Performance mode, DirectX 11 or 12, frame rate limit, window mode, NVIDIA Reflex, V-Sync, motion blur, shadows, grass, Nanite, ray tracing and the FPS counter. Your original file is backed up the first time, with a one-click restore.
+**Fortnite settings** edits Fortnite's own settings file: Performance mode, DirectX 11 or 12, frame rate limit, window mode, NVIDIA Reflex, V-Sync, motion blur, shadows, grass, Nanite, ray tracing and the FPS counter. It has a **Pro preset** with what most top-earning pros run (Performance mode, low settings, Reflex On + Boost, FPS capped at your monitor). Your original file is backed up the first time, with a one-click restore.
 
 **Server ping** shows live ping, jitter and packet loss to every Fortnite datacenter: Virginia, Ohio, Dallas, Oregon, San Jose, Frankfurt, London, Paris, Sao Paulo, Sydney, Tokyo and Bahrain. It uses Epic's own matchmaking ping servers and tells you which Matchmaking Region to pick.
 
