@@ -1,12 +1,12 @@
-# FPS Boost
+# vzc1's optimizations
 
 Windows tweaks for Fortnite that **actually do something**, in a clean app where every tweak is one switch. Flip it on to apply it, flip it off to undo it.
 
 ## Download
 
-Grab **FPSBoost.exe** from the [Releases](../../releases) page and run it. It asks for admin because most of these are system settings.
+Grab **vzc1-optimizations.exe** from the [Releases](../../releases) page and run it. It asks for admin because most of these are system settings.
 
-> Windows SmartScreen or your antivirus may warn about it because the exe isn't code-signed. The full source is `FPSBoost.ps1` in this repo, so you can read exactly what it does, or run `Run_FPS_Boost.bat` instead of the exe.
+> Windows SmartScreen may say "Windows protected your PC" because the exe isn't code-signed. Click **More info** then **Run anyway**. Or grab `vzc1-optimizations-script.zip` instead and double-click `Run-vzc1-optimizations.bat`: it's the same app as a readable script.
 
 ## What's in it
 
@@ -40,4 +40,4 @@ Grab **FPSBoost.exe** from the [Releases](../../releases) page and run it. It as
 - The biggest FPS gains are in Fortnite's own settings: **Performance** rendering mode, **NVIDIA Reflex On + Boost**, Fullscreen, and V-Sync off.
 
 ## Building the exe yourself
-GitHub Actions builds `FPSBoost.exe` with [ps2exe](https://github.com/MScholtes/PS2EXE) and publishes a new release every time something is pushed to `main`.
+GitHub Actions compiles a small C# launcher (`build/Launcher.cs`) that runs `vzc1-optimizations.ps1` inside the exe. Nothing gets dropped to disk or downloaded. It publishes a new release every time something is pushed to `main`.

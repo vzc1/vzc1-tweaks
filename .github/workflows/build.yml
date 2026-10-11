@@ -3,7 +3,6 @@ name: Build EXE
 on:
   push:
     branches: [main]
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -15,33 +14,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ps2exe
+      - name: Build vzc1-optimizations.exe
         shell: powershell
         run: |
-          Set-PSRepository PSGallery -InstallationPolicy Trusted
-          Install-Module ps2exe -Scope CurrentUser -Force
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          $sma = [System.Management.Automation.PSObject].Assembly.Location
+          $ver = "2.0.${{ github.run_number }}.0"
+          (Get-Content build\Launcher.cs -Raw) -replace '\[assembly: AssemblyCompany', "[assembly: AssemblyVersion(`"$ver`")]`n[assembly: AssemblyFileVersion(`"$ver`")]`n[assembly: AssemblyCompany" | Set-Content build\Launcher.gen.cs
+          & $csc /nologo /target:winexe /optimize+ /platform:anycpu `
+            /out:vzc1-optimizations.exe `
+            /win32manifest:build\app.manifest `
+            /win32icon:build\icon.ico `
+            "/resource:vzc1-optimizations.ps1,app.ps1" `
+            "/reference:$sma" /reference:System.Windows.Forms.dll `
+            build\Launcher.gen.cs
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path vzc1-optimizations.exe)) { throw 'Build failed' }
 
-      - name: Build FPSBoost.exe
+      - name: Package script version
         shell: powershell
-        run: |
-          Invoke-ps2exe -inputFile FPSBoost.ps1 -outputFile FPSBoost.exe `
-            -noConsole -requireAdmin -STA `
-            -title 'FPS Boost' -product 'FPS Boost' -description 'Windows tweaks for Fortnite that actually do something' `
-            -version "2.0.${{ github.run_number }}.0"
-          if (-not (Test-Path FPSBoost.exe)) { throw 'Build failed' }
+        run: Compress-Archive -Path vzc1-optimizations.ps1, Run-vzc1-optimizations.bat, README.md -DestinationPath vzc1-optimizations-script.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: FPSBoost
-          path: FPSBoost.exe
+          name: vzc1-optimizations
+          path: |
+            vzc1-optimizations.exe
+            vzc1-optimizations-script.zip
 
       - name: Publish release
-        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v2.0.${{ github.run_number }}
-          name: FPS Boost v2.0.${{ github.run_number }}
+          name: vzc1's optimizations v2.0.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           make_latest: true
-          body: Download **FPSBoost.exe** below and run it. Windows may warn because the exe isn't code-signed. Click "More info" then "Run anyway".
-          files: FPSBoost.exe
+          body: |
+            Download **vzc1-optimizations.exe** below and run it.
+
+            If Windows SmartScreen shows "Windows protected your PC", click **More info** then **Run anyway**. That shows up for any new app that isn't code-signed.
+
+            Prefer not to run an exe? Download **vzc1-optimizations-script.zip**, unzip it, and double-click `Run-vzc1-optimizations.bat`. Same app, and you can read every line of it.
+          files: |
+            vzc1-optimizations.exe
+            vzc1-optimizations-script.zip

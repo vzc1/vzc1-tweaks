@@ -1,4 +1,4 @@
-# FPS Boost - tweaks that actually do something.
+# vzc1's optimizations - Fortnite tweaks that actually do something.
 # Every switch applies a real Windows setting and can be flipped back to undo it.
 
 # ---------- Run as admin (needed for system-wide settings) ----------
@@ -31,7 +31,7 @@ $GUID_RE = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}'
 $PLAN_BALANCED = '381b4222-f694-41f0-9685-ff5bb260df2e'
 $PLAN_HIGH     = '8c5e7fda-e8bf-4a96-9a85-cf4dbd8f9e7f'
 $PLAN_ULTIMATE = 'e9a42b02-d5df-448d-aa00-03f14749eb61'
-$PLAN_NAME     = 'FPS Boost Performance'
+$PLAN_NAME     = 'vzc1 Performance'
 $GPU_PREFS     = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
 $FN_EXE_NAME   = 'FortniteClient-Win64-Shipping.exe'
 $IFEO          = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$FN_EXE_NAME"
@@ -67,7 +67,7 @@ $Tweaks = @(
         Name = 'Max performance power plan'
         Desc = 'Stops your CPU from clocking down between frames. Biggest help is smoother 1% lows (fewer random dips). Uses a bit more power.'
         Tags = @('FPS')
-        Get  = { (powercfg /getactivescheme | Out-String) -match "$PLAN_NAME|$PLAN_HIGH" }
+        Get  = { (powercfg /getactivescheme | Out-String) -match "$PLAN_NAME|FPS Boost Performance|$PLAN_HIGH" }
         On   = {
             $guid = $null
             $line = (powercfg /list | Out-String) -split "`n" | Where-Object { $_ -match $PLAN_NAME } | Select-Object -First 1
@@ -233,7 +233,7 @@ $PING_REGIONS = @(
 $sync = [hashtable]::Synchronized(@{
     State = 'idle'; Running = $false; Stop = $false; Status = ''; Rounds = 0
     Regions = $PING_REGIONS; DCs = $null
-    CacheDir = (Join-Path $env:LOCALAPPDATA 'FPSBoost')
+    CacheDir = (Join-Path $env:LOCALAPPDATA 'vzc1-optimizations')
 })
 
 $PingWorker = {
@@ -411,7 +411,7 @@ $PingWorker = {
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="FPS Boost" Width="1040" Height="760" MinWidth="860" MinHeight="560"
+        Title="vzc1's optimizations" Width="1040" Height="760" MinWidth="860" MinHeight="560"
         WindowStartupLocation="CenterScreen" WindowStyle="None" AllowsTransparency="True"
         Background="Transparent" ResizeMode="CanResizeWithGrip"
         FontFamily="Segoe UI Variable Text, Segoe UI" TextOptions.TextFormattingMode="Display">
@@ -568,8 +568,8 @@ $PingWorker = {
               <TextBlock Text="&#xE945;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="16" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
-              <TextBlock Text="FPS BOOST" FontSize="16" FontWeight="Black" Foreground="White"/>
-              <TextBlock Text="for Fortnite" FontSize="11" Foreground="#6B7389"/>
+              <TextBlock Text="VZC1'S" FontSize="17" FontWeight="Black" Foreground="White"/>
+              <TextBlock Text="optimizations" FontSize="12" FontWeight="SemiBold" Foreground="#A08BFF"/>
             </StackPanel>
           </StackPanel>
 
@@ -878,7 +878,7 @@ foreach ($t in $Tweaks) {
 Update-Switches
 
 (W 'BtnAll').Add_Click({
-    $r = [Windows.MessageBox]::Show("Turn on every tweak?`n`nTip: make a restore point first (Tools page) if you haven't.", 'FPS Boost', 'YesNo', 'Question')
+    $r = [Windows.MessageBox]::Show("Turn on every tweak?`n`nTip: make a restore point first (Tools page) if you haven't.", "vzc1's optimizations", 'YesNo', 'Question')
     if ($r -ne 'Yes') { return }
     $fails = @(); $reboot = $false
     foreach ($cb in $script:Switches) {
@@ -1125,8 +1125,8 @@ Add-Tool 'Make a restore point' 'Saves a snapshot of your Windows settings. If a
     try {
         Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
         Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' 'SystemRestorePointCreationFrequency' 0
-        Checkpoint-Computer -Description 'Before FPS Boost' -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
-        Set-Status "Restore point 'Before FPS Boost' created." 'ok'
+        Checkpoint-Computer -Description "Before vzc1's optimizations" -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
+        Set-Status "Restore point 'Before vzc1's optimizations' created." 'ok'
     } catch { Set-Status "Couldn't create restore point: $($_.Exception.Message)" 'err' }
 }
 
