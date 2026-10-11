@@ -17,12 +17,12 @@ jobs:
       - name: Build vzc1-optimizations.exe
         shell: powershell
         run: |
-          $ps1 = (Get-Content vzc1-optimizations.ps1 -Raw) -replace "\`$APP_VERSION\s+= '[^']*'", "`$APP_VERSION   = '4.0.${{ github.run_number }}'"
+          $ps1 = (Get-Content vzc1-optimizations.ps1 -Raw) -replace "\`$APP_VERSION\s+= '[^']*'", "`$APP_VERSION   = '5.0.${{ github.run_number }}'"
           [IO.File]::WriteAllText("$PWD\vzc1-optimizations.ps1", $ps1)
           Select-String -Path vzc1-optimizations.ps1 -Pattern '^\$APP_VERSION'
           $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
           $sma = [System.Management.Automation.PSObject].Assembly.Location
-          $ver = "4.0.${{ github.run_number }}.0"
+          $ver = "5.0.${{ github.run_number }}.0"
           (Get-Content build\Launcher.cs -Raw) -replace '\[assembly: AssemblyCompany', "[assembly: AssemblyVersion(`"$ver`")]`n[assembly: AssemblyFileVersion(`"$ver`")]`n[assembly: AssemblyCompany" | Set-Content build\Launcher.gen.cs
           & $csc /nologo /target:winexe /optimize+ /platform:anycpu `
             /out:vzc1-optimizations.exe `
@@ -47,8 +47,8 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v4.0.${{ github.run_number }}
-          name: vzc1's optimizations v4.0.${{ github.run_number }}
+          tag_name: v5.0.${{ github.run_number }}
+          name: vzc1's optimizations v5.0.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |

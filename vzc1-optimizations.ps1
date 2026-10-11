@@ -70,7 +70,7 @@ function Remove-Reg($Path, $Name) {
 
 # ---------- Constants ----------
 $APP_NAME      = "vzc1's optimizations"
-$APP_VERSION   = '4.0.0'
+$APP_VERSION   = '5.0.0'
 $UPDATE_REPO   = 'vzc1/vzc1-tweaks'
 $GUID_RE       = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}'
 $PLAN_BALANCED = '381b4222-f694-41f0-9685-ff5bb260df2e'
