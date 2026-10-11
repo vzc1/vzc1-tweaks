@@ -26,8 +26,12 @@ Grab **FPSBoost.exe** from the [Releases](../../releases) page and run it. It as
 - Remove network throttling
 - Kill the Sticky Keys popup
 
+**Server Ping**
+- Live ping to **every Fortnite datacenter**, not just the region: NA East (Virginia, Ohio), NA Central (Dallas), NA West (Oregon, San Jose), Europe (Frankfurt, London, Paris), Brazil (Sao Paulo), Oceania (Sydney), Asia (Tokyo), Middle East (Bahrain)
+- Uses Epic's own matchmaking ping servers, then maps every server IP to its real city using Amazon's published IP ranges. New datacenters show up automatically
+- Shows ping, jitter, packet loss and a live graph for each datacenter, plus the best server and which Matchmaking Region to pick
+
 **Tools**
-- **Test Fortnite ping:** pings every Fortnite region and shows ping, jitter and packet loss, then tells you which region to pick
 - **Make restore point** before changing anything
 - **Clean temp files** (leaves your shader cache alone so you don't get stutters)
 

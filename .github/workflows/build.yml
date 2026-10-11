@@ -27,7 +27,7 @@ jobs:
           Invoke-ps2exe -inputFile FPSBoost.ps1 -outputFile FPSBoost.exe `
             -noConsole -requireAdmin -STA `
             -title 'FPS Boost' -product 'FPS Boost' -description 'Windows tweaks for Fortnite that actually do something' `
-            -version "1.0.${{ github.run_number }}.0"
+            -version "2.0.${{ github.run_number }}.0"
           if (-not (Test-Path FPSBoost.exe)) { throw 'Build failed' }
 
       - uses: actions/upload-artifact@v4
@@ -39,8 +39,8 @@ jobs:
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: FPS Boost v1.0.${{ github.run_number }}
+          tag_name: v2.0.${{ github.run_number }}
+          name: FPS Boost v2.0.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: Download **FPSBoost.exe** below and run it. Windows may warn because the exe isn't code-signed. Click "More info" then "Run anyway".
