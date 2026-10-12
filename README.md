@@ -18,13 +18,14 @@ If Windows shows "Windows protected your PC", click **More info**, then **Run an
 - Wi-Fi instead of a cable
 - Background apps using a lot of memory
 
-**Tweaks** (Performance, Network, Mouse and keyboard)
+**Tweaks** (Performance, Network, Mouse and keyboard, Low-end PC)
 - Max performance power plan, Game DVR off, Game Mode, hardware GPU scheduling, windowed game optimizations
 - High CPU priority for Fortnite, run Fortnite on the dedicated GPU
 - Network card power saving off, update sharing off, network throttling off
 - Mouse acceleration off, Sticky Keys shortcut off
+- Low-end PC: Windows visual effects set to best performance, transparency off, background Store apps off
 
-**Fortnite settings** edits Fortnite's own settings file: Performance mode, DirectX 11 or 12, frame rate limit, window mode, NVIDIA Reflex, V-Sync, motion blur, shadows, grass, Nanite, ray tracing and the FPS counter. It has a **Pro preset** with what most top-earning pros run (Performance mode, low settings, Reflex On + Boost, FPS capped at your monitor). Your original file is backed up the first time, with a one-click restore.
+**Fortnite settings** edits Fortnite's own settings file: Performance mode, DirectX 11 or 12, frame rate limit, window mode, NVIDIA Reflex, V-Sync, motion blur, shadows, grass, Nanite, ray tracing and the FPS counter. It has a **Pro preset**, a **Potato preset** for weak PCs (3D resolution 50%, everything lowest), **your own saved presets**, 3D resolution and game resolution controls, and for NVIDIA cards the exact NVIDIA Control Panel settings to use. The Pro preset is with what most top-earning pros run (Performance mode, low settings, Reflex On + Boost, FPS capped at your monitor). Your original file is backed up the first time, with a one-click restore.
 
 **Server ping** shows live ping, jitter and packet loss to every Fortnite datacenter: Virginia, Ohio, Dallas, Oregon, San Jose, Frankfurt, London, Paris, Sao Paulo, Sydney, Tokyo and Bahrain. It uses Epic's own matchmaking ping servers and tells you which Matchmaking Region to pick.
 

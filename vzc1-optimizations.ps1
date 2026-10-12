@@ -220,6 +220,44 @@ $Tweaks = @(
         Off  = { Remove-Reg $GPU_PREFS $FN_PATH }
     }
     [pscustomobject]@{
+        Id = 'visualfx'; Group = 'Low-end PC'
+        Name = 'Windows visual effects: best performance'
+        Desc = 'Turns off window animations, fades and shadows so a weak PC has more left over for the game. Fully applies after you sign out and back in.'
+        Get  = { (Get-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' 'VisualFXSetting') -eq 2 }
+        On   = {
+            Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' 'VisualFXSetting' 2
+            Set-Reg 'HKCU:\Control Panel\Desktop\WindowMetrics' 'MinAnimate' '0' 'String'
+            Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarAnimations' 0
+        }
+        Off  = {
+            Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' 'VisualFXSetting' 0
+            Set-Reg 'HKCU:\Control Panel\Desktop\WindowMetrics' 'MinAnimate' '1' 'String'
+            Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'TaskbarAnimations' 1
+        }
+    }
+    [pscustomobject]@{
+        Id = 'transparency'; Group = 'Low-end PC'
+        Name = 'Transparency effects off'
+        Desc = 'Stops the see-through blur on the taskbar, Start menu and windows. Saves a little graphics power on weak PCs.'
+        Get  = { (Get-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'EnableTransparency') -eq 0 }
+        On   = { Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'EnableTransparency' 0 }
+        Off  = { Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'EnableTransparency' 1 }
+    }
+    [pscustomobject]@{
+        Id = 'bgapps'; Group = 'Low-end PC'
+        Name = 'Background Store apps off'
+        Desc = 'Stops Microsoft Store apps like Weather, Photos and Xbox from running in the background when you are not using them.'
+        Get  = { (Get-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications' 'GlobalUserDisabled') -eq 1 }
+        On   = {
+            Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications' 'GlobalUserDisabled' 1
+            Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'BackgroundAppGlobalToggle' 0
+        }
+        Off  = {
+            Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications' 'GlobalUserDisabled' 0
+            Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search' 'BackgroundAppGlobalToggle' 1
+        }
+    }
+    [pscustomobject]@{
         Id = 'nicpower'; Group = 'Network'; Reboot = $true
         Name = 'Network card power saving off'
         Desc = 'Stops Windows putting your Wi-Fi or Ethernet card to sleep, which causes lag spikes. Same as unticking "Allow the computer to turn off this device" in Device Manager. Needs a restart.'
@@ -1104,6 +1142,7 @@ $TWEAK_GROUPS = @(
     @{ Id = 'perf';  Group = 'Performance';        Title = 'Performance';      Sub = 'Windows settings that keep your FPS high and steady.' }
     @{ Id = 'net';   Group = 'Network';            Title = 'Network';          Sub = 'Settings that cut lag spikes. They cannot lower your base ping, which depends on distance to the server.' }
     @{ Id = 'input'; Group = 'Mouse and keyboard'; Title = 'Mouse and keyboard'; Sub = 'Settings that make your aim and keys respond the same way every time.' }
+    @{ Id = 'lowend'; Group = 'Low-end PC'; Title = 'Low-end PC'; Sub = 'Extra savings for weak PCs and laptops. They make Windows look plainer but leave more power for Fortnite. For potato graphics in the game itself, use the Potato preset on the Game settings page.' }
 )
 $NAV = @(
     @{ Id = 'home';     Label = 'Dashboard';         Icon = [char]0xE80F }
@@ -1111,6 +1150,7 @@ $NAV = @(
     @{ Id = 'perf';     Label = 'Performance';       Icon = [char]0xE945; Group = 'Performance' }
     @{ Id = 'net';      Label = 'Network';           Icon = [char]0xE701; Group = 'Network' }
     @{ Id = 'input';    Label = 'Mouse and keyboard'; Icon = [char]0xE765; Group = 'Mouse and keyboard' }
+    @{ Id = 'lowend';   Label = 'Low-end PC';        Icon = [char]0xE7F8; Group = 'Low-end PC' }
     @{ Section = 'Fortnite' }
     @{ Id = 'fortnite'; Label = 'Game settings';     Icon = [char]0xE7FC }
     @{ Id = 'ping';     Label = 'Server ping';       Icon = [char]0xE839 }
@@ -1175,7 +1215,7 @@ function Go-Page($id) { if ($NavButtons[$id].IsChecked) { Show-Page $id } else {
 function Show-Page($id) {
     foreach ($k in $Pages.Keys) { $Pages[$k].Visibility = if ($k -eq $id) { 'Visible' } else { 'Collapsed' } }
     $Pages[$id].ScrollToTop()
-    $always = @('home', 'apps', 'startup', 'fortnite', 'perf', 'net', 'input')
+    $always = @('home', 'apps', 'startup', 'fortnite', 'perf', 'net', 'input', 'lowend')
     if (-not $script:Built[$id] -or ($always -contains $id)) {
         $window.Cursor = [Windows.Input.Cursors]::Wait
         try {
@@ -1654,6 +1694,58 @@ $liveTimer.Add_Tick({ if ($Pages['home'].Visibility -eq 'Visible') { Update-Live
 $liveTimer.Start()
 
 # ---------- Fortnite settings page ----------
+# ---------- Custom presets ----------
+$PRESETS_FILE = Join-Path $DATA_DIR 'presets.json'
+$SWITCH_KEYS = @('VSync', 'Blur', 'Shadows', 'Grass', 'Nanite', 'RT', 'Fps')
+$SEG_KEYS = @('Mode', 'Cap', 'Win', 'Reflex', 'Res3D', 'Res')
+function Get-FnState {
+    $st = [ordered]@{}
+    foreach ($k in $SEG_KEYS) { $st[$k] = Get-SegValue $script:Fn[$k] }
+    foreach ($k in $SWITCH_KEYS) { $st[$k] = [bool]$script:Fn[$k].IsChecked }
+    $st.Pro = [bool]$script:FnPro
+    $st
+}
+function Set-FnState($st) {
+    foreach ($k in $SEG_KEYS) { if ($null -ne $st.$k) { Set-SegValue $script:Fn[$k] $st.$k } }
+    foreach ($k in $SWITCH_KEYS) { if ($null -ne $st.$k) { $script:Fn[$k].IsChecked = [bool]$st.$k } }
+}
+function Get-MyPresets {
+    if (-not (Test-Path -LiteralPath $PRESETS_FILE)) { return @() }
+    try {
+        $json = Get-Content -LiteralPath $PRESETS_FILE -Raw | ConvertFrom-Json
+        @(foreach ($x in $json) { $x })
+    } catch { @() }
+}
+function Save-MyPresetList($list) {
+    if (-not (Test-Path $DATA_DIR)) { New-Item -ItemType Directory -Path $DATA_DIR -Force | Out-Null }
+    ConvertTo-Json -InputObject @($list) -Depth 5 | Set-Content -LiteralPath $PRESETS_FILE -Encoding UTF8
+}
+function Save-MyPreset {
+    $name = "$($script:PresetName.Text)".Trim()
+    if (-not $name) { Set-Status 'Give the preset a name first.' 'err'; return }
+    $list = @(Get-MyPresets | Where-Object { $_.Name -ne $name })
+    $list += [pscustomobject]@{ Name = $name; State = [pscustomobject](Get-FnState) }
+    try { Save-MyPresetList $list; Set-Status "Saved preset $name." 'ok' } catch { Set-Status "Couldn't save the preset: $($_.Exception.Message)" 'err'; return }
+    $keep = Get-FnState
+    Show-Page 'fortnite'
+    Set-FnState $keep
+}
+function Remove-MyPreset($name) {
+    try { Save-MyPresetList @(Get-MyPresets | Where-Object { $_.Name -ne $name }); Set-Status "Deleted preset $name." 'ok' } catch { Set-Status $_.Exception.Message 'err' }
+}
+function Get-PresetSummary($st) {
+    $mode = switch ($st.Mode) { 'perf' { 'Performance mode' } 'dx12' { 'DirectX 12' } 'dx11' { 'DirectX 11' } default { 'Rendering unchanged' } }
+    $cap = if ($null -eq $st.Cap) { '' } elseif ("$($st.Cap)" -eq '0') { 'unlimited FPS' } else { "$($st.Cap) FPS cap" }
+    $r3 = if ($st.Res3D) { "3D resolution $($st.Res3D)%" } else { '' }
+    (@($mode, $cap, $r3) | Where-Object { $_ }) -join ', '
+}
+function Open-NvidiaPanel {
+    $paths = @("$env:ProgramFiles\NVIDIA Corporation\Control Panel Client\nvcplui.exe", "${env:ProgramFiles(x86)}\NVIDIA Corporation\Control Panel Client\nvcplui.exe")
+    foreach ($pth in $paths) { if (Test-Path -LiteralPath $pth) { Start-Process -FilePath $pth; return } }
+    try { Start-Process 'shell:AppsFolder\NVIDIACorp.NVIDIAControlPanel_56jnhndqxhecp!NVIDIACorp.NVIDIAControlPanel'; return } catch { }
+    Set-Status "NVIDIA Control Panel isn't installed. Get it free from the Microsoft Store." 'err'
+}
+
 function Build-fortnite {
     $body = $Bodies['fortnite']; $body.Children.Clear()
     Add-PageHeader $body 'Fortnite settings' "Changes Fortnite's own settings file. Close Fortnite first, because it rewrites the file when it exits. Your original file is backed up the first time you apply."
@@ -1677,11 +1769,27 @@ function Build-fortnite {
     if ($cap -gt 0 -and ($capVals -notcontains $cap)) { $capVals += $cap }
     $capOpts = @($capVals | Sort-Object | ForEach-Object { , @("$_", $_) }) + , @('Unlimited', 0)
 
+    $res3d = Get-IniValue $lines 'ScalabilityGroups' 'sg.ResolutionQuality'
+    try { $res3d = [int][double]$res3d } catch { $res3d = $null }
+    $res3dVals = @(100, 85, 75, 66, 50)
+    if ($res3d -and ($res3dVals -notcontains $res3d)) { $res3dVals += $res3d }
+    $res3dOpts = @($res3dVals | Sort-Object -Descending | ForEach-Object { , @("$_%", $_) })
+
+    $nativeW = 1920; $nativeH = 1080
+    try { $ri0 = [Vz.Native]::RefreshInfo(); if ($ri0) { $nativeW = $ri0[0]; $nativeH = $ri0[1] } } catch { }
+    $curW = & $g 'ResolutionSizeX'; $curH = & $g 'ResolutionSizeY'
+    $resOpts = @(, @("Native ($nativeW x $nativeH)", "$($nativeW)x$($nativeH)"))
+    foreach ($r in @(@(1600, 900), @(1280, 720))) { if ($r[0] -lt $nativeW) { $resOpts += , @("$($r[0]) x $($r[1])", "$($r[0])x$($r[1])") } }
+    $curRes = if ($curW -and $curH) { "$($curW)x$($curH)" } else { "$($nativeW)x$($nativeH)" }
+    if (-not ($resOpts | Where-Object { $_[1] -eq $curRes })) { $resOpts += , @("Current ($curW x $curH)", $curRes) }
+
     $script:Fn = @{
         Mode = New-Seg @(@('Performance', 'perf'), @('DirectX 11', 'dx11'), @('DirectX 12', 'dx12')) $mode
         Cap  = New-Seg $capOpts $cap
         Win  = New-Seg @(@('Fullscreen', '0'), @('Windowed fullscreen', '1'), @('Windowed', '2')) (& $g 'FullscreenMode')
         Reflex = New-Seg @(@('Off', '0'), @('On', '1'), @('On + Boost', '2')) (& $g 'LatencyTweak2')
+        Res3D = New-Seg $res3dOpts $res3d
+        Res = New-Seg $resOpts $curRes
         VSync = New-Switch ((& $g 'bUseVSync') -ne 'True')
         Blur  = New-Switch ((& $g 'bMotionBlur') -ne 'True')
         Grass = New-Switch ((& $g 'bShowGrass') -eq 'False')
@@ -1696,13 +1804,64 @@ function Build-fortnite {
     $pro = New-Panel
     $pro.BorderBrush = B $C.Accent
     Add-PanelItem $pro (New-Row 'Pro preset' 'What most top-earning Fortnite pros run: Performance mode, fullscreen, Reflex On + Boost, FPS capped at your monitor, 3D resolution 100%, and view distance, meshes, textures, effects and post-processing on low with shadows and anti-aliasing off. Pick it, then press Apply to Fortnite.' (New-Button 'Use pro preset' -Primary { Set-FortnitePro }))
+    Add-PanelItem $pro (New-Row 'Potato preset' 'For weak PCs and laptops that struggle to hold 60 FPS. Everything from the pro preset, plus 3D resolution at 50% so the game renders far fewer pixels. It looks blurrier but runs a lot faster. Pick it, then press Apply to Fortnite.' (New-Button 'Use potato preset' -Primary { Set-FortnitePotato }))
     [void]$body.Children.Add($pro)
+
+    # My presets
+    $mine = New-Panel 'My presets'
+    $saveRow = New-Object Windows.Controls.StackPanel
+    $saveRow.Orientation = 'Horizontal'
+    $script:PresetName = New-Object Windows.Controls.TextBox
+    $script:PresetName.Width = 220; $script:PresetName.Padding = T 10 7 10 7
+    $script:PresetName.Background = B $C.Panel2; $script:PresetName.Foreground = B $C.Text
+    $script:PresetName.BorderBrush = B $C.Line; $script:PresetName.CaretBrush = B '#FFFFFF'
+    $script:PresetName.FontSize = 13; $script:PresetName.VerticalContentAlignment = 'Center'
+    $script:PresetName.Text = 'My preset'
+    [void]$saveRow.Children.Add($script:PresetName)
+    $saveBtn = New-Button 'Save as preset' { Save-MyPreset }
+    $saveBtn.Margin = T 10 0 0 0
+    [void]$saveRow.Children.Add($saveBtn)
+    Add-PanelItem $mine (New-Row 'Save what is picked below' 'Set everything on this page the way you like it, give it a name and save it. Load it any time, then press Apply to Fortnite.' $saveRow)
+    foreach ($pr in @(Get-MyPresets)) {
+        $btns = New-Object Windows.Controls.StackPanel
+        $btns.Orientation = 'Horizontal'
+        $ld = New-Button 'Load' -Primary { param($s, $e) Set-FnState $s.Tag.State; $script:FnPro = [bool]$s.Tag.State.Pro; Set-Status "Loaded preset $($s.Tag.Name). Press Apply to Fortnite to save it to the game." }
+        $ld.Tag = $pr
+        $del = New-Button 'Delete' { param($s, $e) Remove-MyPreset $s.Tag.Name; Show-Page 'fortnite' }
+        $del.Tag = $pr; $del.Margin = T 8 0 0 0
+        [void]$btns.Children.Add($ld); [void]$btns.Children.Add($del)
+        Add-PanelItem $mine (New-Row $pr.Name (Get-PresetSummary $pr.State) $btns)
+    }
+    [void]$body.Children.Add($mine)
+
+    # NVIDIA driver settings (shown when an NVIDIA card is found)
+    if ("$($script:Specs.Gpu)" -match 'NVIDIA') {
+        $nv = New-Panel 'NVIDIA potato settings'
+        Add-PanelItem $nv (New-Row 'Set these in NVIDIA Control Panel' 'Open it, go to Manage 3D settings, then Program Settings, pick Fortnite (add FortniteClient-Win64-Shipping.exe if it is not listed) and set the values below. They lower image quality inside the driver for more FPS.' (New-Button 'Open NVIDIA Control Panel' -Primary { Open-NvidiaPanel }))
+        foreach ($nvRow in @(
+            @('Power management mode', 'Prefer maximum performance', 'Keeps the graphics card at full clock speed while you play.'),
+            @('Texture filtering - Quality', 'High performance', 'The biggest potato setting in the driver. Slightly blurrier textures, more FPS.'),
+            @('Texture filtering - Anisotropic sample optimization', 'On', 'Cheaper texture sampling.'),
+            @('Texture filtering - Trilinear optimization', 'On', 'Cheaper texture blending.'),
+            @('Low latency mode', 'Off (Reflex in Fortnite does this better)', 'Fortnite has Reflex built in, so leave this off and use Reflex On + Boost instead.'),
+            @('Vertical sync', 'Off', 'Adds input delay.'),
+            @('Shader cache size', 'Unlimited', 'Fewer stutters from shaders being rebuilt.'),
+            @('Threaded optimization', 'On', 'Lets the driver use more CPU cores.'),
+            @('Max frame rate', 'Off', 'Cap FPS in Fortnite instead.')
+        )) {
+            $val = New-Text $nvRow[1] 13 $C.AccentSoft 'SemiBold'
+            Add-PanelItem $nv (New-Row $nvRow[0] $nvRow[2] $val)
+        }
+        [void]$body.Children.Add($nv)
+    }
 
     Add-Heading $body 'Display'
     $p1 = New-Panel
     Add-PanelItem $p1 (New-Row 'Rendering mode' 'Performance mode is the biggest FPS boost on low and mid-range PCs. It lowers how the game looks. DirectX 12 is needed for Nanite and ray tracing.' $F.Mode.Panel)
     $hzText = if ($hz) { "your monitor's $hz Hz" } else { "your monitor's refresh rate" }
     Add-PanelItem $p1 (New-Row 'Frame rate limit' "Set it to $hzText or a little higher. Unlimited can make frame times uneven." $F.Cap.Panel)
+    Add-PanelItem $p1 (New-Row '3D resolution' 'How sharp the game world is drawn. Lower is blurrier but much faster, and menus and the HUD stay sharp. 100% looks best. 66% or 50% is a big boost on weak PCs.' $F.Res3D.Panel)
+    Add-PanelItem $p1 (New-Row 'Game resolution' 'A lower resolution gives more FPS on weak graphics cards, but everything looks less sharp. Most pros play at 1920 x 1080.' $F.Res.Panel)
     Add-PanelItem $p1 (New-Row 'Window mode' 'Fullscreen has the lowest input delay.' $F.Win.Panel)
     Add-PanelItem $p1 (New-Row 'NVIDIA Reflex' 'Cuts input delay. Only does something on NVIDIA graphics cards.' $F.Reflex.Panel)
     [void]$body.Children.Add($p1)
@@ -1735,9 +1894,16 @@ function Build-fortnite {
     [void]$body.Children.Add($bar)
 }
 
+function Set-FortnitePotato {
+    Set-FortnitePro
+    Set-SegValue $script:Fn.Res3D '50'
+    Set-Status 'Potato preset picked: Performance mode, everything on lowest, 3D resolution 50%. Press Apply to Fortnite to save it.'
+}
+
 function Set-FortnitePro {
     Set-FortniteRecommended
     Set-SegValue $script:Fn.Mode 'perf'
+    Set-SegValue $script:Fn.Res3D '100'
     $script:FnPro = $true
     Set-Status 'Pro preset picked: Performance mode, low settings, Reflex On + Boost, FPS capped at your monitor. Press Apply to Fortnite to save it.'
 }
@@ -1770,6 +1936,14 @@ function Save-FortniteSettings {
         if ($null -ne $cap) { Set-IniValue $lines $FN_SEC 'FrameRateLimit' ('{0}.000000' -f [int]$cap) }
         $win = Get-SegValue $F.Win
         if ($null -ne $win) { foreach ($k in 'FullscreenMode', 'LastConfirmedFullscreenMode', 'PreferredFullscreenMode') { Set-IniValue $lines $FN_SEC $k $win } }
+        $r3 = Get-SegValue $F.Res3D
+        if ($null -ne $r3) { Set-IniValue $lines 'ScalabilityGroups' 'sg.ResolutionQuality' ('{0}.000000' -f [int]$r3) }
+        $rs = Get-SegValue $F.Res
+        if ($rs) {
+            $wh = $rs.Split('x')
+            foreach ($k in 'ResolutionSizeX', 'LastUserConfirmedResolutionSizeX', 'DesiredScreenWidth') { Set-IniValue $lines $FN_SEC $k $wh[0] }
+            foreach ($k in 'ResolutionSizeY', 'LastUserConfirmedResolutionSizeY', 'DesiredScreenHeight') { Set-IniValue $lines $FN_SEC $k $wh[1] }
+        }
         $rf = Get-SegValue $F.Reflex
         if ($null -ne $rf) { Set-IniValue $lines $FN_SEC 'LatencyTweak2' $rf }
         $tf = { param($v) if ($v) { 'True' } else { 'False' } }
@@ -1782,7 +1956,6 @@ function Save-FortniteSettings {
         if ($F.Shadows.IsChecked) { Set-IniValue $lines 'ScalabilityGroups' 'sg.ShadowQuality' '0' }
         if ($F.RT.IsChecked) { Set-IniValue $lines 'RayTracing' 'r.RayTracing.EnableInGame' 'False' }
         if ($script:FnPro) {
-            Set-IniValue $lines 'ScalabilityGroups' 'sg.ResolutionQuality' '100'
             foreach ($k in 'sg.ViewDistanceQuality', 'sg.AntiAliasingQuality', 'sg.TextureQuality', 'sg.EffectsQuality', 'sg.PostProcessQuality', 'sg.FoliageQuality', 'sg.GlobalIlluminationQuality', 'sg.ReflectionQuality') {
                 Set-IniValue $lines 'ScalabilityGroups' $k '0'
             }
