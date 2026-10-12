@@ -252,14 +252,32 @@ $script:NvLoaded = $false
 try { Add-Type -TypeDefinition $NV_SOURCE -ErrorAction Stop; $script:NvLoaded = $true } catch { }
 
 # Fortnite's NVIDIA potato profile: setting ID, name, value, what it means
-$NV_POTATO = @(
-    @{ Id = 0x00738E8F; Name = 'Texture LOD bias (DirectX)'; Value = 0x18; Text = '+3, blurry potato textures' }
-    @{ Id = 0x20403F79; Name = 'Texture LOD bias (OpenGL)'; Value = 0x30; Text = '+3' }
-    @{ Id = 0x0019BB68; Name = 'Negative LOD bias'; Value = 0x01; Text = 'Clamp' }
-    @{ Id = 0x10D48A85; Name = 'Transparency supersampling'; Value = 0x34; Text = '8x, needed for the LOD bias to apply' }
-    @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = 0x14; Text = 'High performance' }
-    @{ Id = 0x1057EB71; Name = 'Power management mode'; Value = 0x01; Text = 'Prefer maximum performance' }
+$NV_METHODS = @(
+    @{ Key = 'benfn'; Name = 'BenFN method'
+       Desc = "From BenFN's potato graphics video (method first shown by Martoz). Very flat textures with the ground and objects still showing properly. Also switches Fortnite to DirectX 12 with Nanite on, which this method needs."
+       Game = @{ Mode = 'dx12'; Nanite = $true }
+       Settings = @(
+        @{ Id = 0x00738E8F; Name = 'Texture LOD bias (DirectX)'; Value = 0x45; Text = '0x45, flat potato textures' }
+        @{ Id = 0x20403F79; Name = 'Texture LOD bias (OpenGL)'; Value = 0x45; Text = '0x45' }
+        @{ Id = 0x0019BB68; Name = 'Negative LOD bias'; Value = 0x01; Text = 'Clamp' }
+        @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = [int]0xFFFFFFF6; Text = 'High quality' }
+        @{ Id = 0x10D48A85; Name = 'Transparency supersampling'; Value = 0x38; Text = '8x Sparse Grid Supersampling' }
+       ) }
+    @{ Key = 'classic'; Name = 'Classic +3'
+       Desc = "The older Profile Inspector method from leStripeZ's video. Textures at +3 LOD bias, high performance filtering and full GPU power. Keeps your rendering mode as it is."
+       Game = $null
+       Settings = @(
+        @{ Id = 0x00738E8F; Name = 'Texture LOD bias (DirectX)'; Value = 0x18; Text = '+3, blurry potato textures' }
+        @{ Id = 0x20403F79; Name = 'Texture LOD bias (OpenGL)'; Value = 0x30; Text = '+3' }
+        @{ Id = 0x0019BB68; Name = 'Negative LOD bias'; Value = 0x01; Text = 'Clamp' }
+        @{ Id = 0x10D48A85; Name = 'Transparency supersampling'; Value = 0x34; Text = '8x Supersampling' }
+        @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = 0x14; Text = 'High performance' }
+        @{ Id = 0x1057EB71; Name = 'Power management mode'; Value = 0x01; Text = 'Prefer maximum performance' }
+       ) }
 )
+# Every setting any method touches, so Undo can put all of them back
+$NV_ALL_IDS = [uint32[]]@($NV_METHODS | ForEach-Object { $_.Settings } | ForEach-Object { [uint32]([int64]$_.Id -band [int64]4294967295) } | Sort-Object -Unique)
+function ConvertTo-U32($v) { [uint32]([int64]$v -band [int64]4294967295) }
 
 # ---------- Registry helpers ----------
 function Get-Reg($Path, $Name) {
@@ -2068,13 +2086,28 @@ function Get-PresetSummary($st) {
     $r3 = if ($st.Res3D) { "3D resolution $($st.Res3D)%" } else { '' }
     (@($mode, $cap, $r3) | Where-Object { $_ }) -join ', '
 }
-function Set-NvPotato([bool]$on) {
+function Set-NvPotato($method) {
     if (-not $script:NvLoaded) { Set-Status "The NVIDIA driver code couldn't load on this PC." 'err'; return }
-    $ids = [uint32[]]@($NV_POTATO | ForEach-Object { [uint32]$_.Id })
-    $err = if ($on) { [Vz.Nv]::Apply($FN_EXE_NAME, $ids, [uint32[]]@($NV_POTATO | ForEach-Object { [uint32]$_.Value })) } else { [Vz.Nv]::Reset($FN_EXE_NAME, $ids) }
-    if ($err) { Set-Status "NVIDIA: $err" 'err' }
-    elseif ($on) { Set-Status 'Potato textures set in your NVIDIA driver. Restart Fortnite to see them.' 'ok' }
-    else { Set-Status "NVIDIA settings for Fortnite are back to the driver's defaults." 'ok' }
+    if ($method) {
+        $ids = [uint32[]]@($method.Settings | ForEach-Object { ConvertTo-U32 $_.Id })
+        $vals = [uint32[]]@($method.Settings | ForEach-Object { ConvertTo-U32 $_.Value })
+        $err = [Vz.Nv]::Reset($FN_EXE_NAME, $NV_ALL_IDS)
+        if (-not $err) { $err = [Vz.Nv]::Apply($FN_EXE_NAME, $ids, $vals) }
+        Write-Log "NVIDIA $($method.Key): $(if ($err) { $err } else { 'applied' })" $(if ($err) { 'err' } else { 'ok' })
+        if ($err) { Set-Status "NVIDIA: $err" 'err'; Show-Page 'fortnite'; return }
+        $msg = "$($method.Name) set in your NVIDIA driver."
+        if ($method.Game -and $script:Fn) {
+            if ($method.Game.Mode) { Set-SegValue $script:Fn.Mode $method.Game.Mode }
+            if ($method.Game.Nanite) { $script:Fn.Nanite.IsChecked = $false }
+            if (Test-FortniteRunning) { $msg += ' Close Fortnite, then press Apply to Fortnite so it switches to DirectX 12 with Nanite on.' }
+            else { Save-FortniteSettings; $msg += ' Fortnite is set to DirectX 12 with Nanite on.' }
+        }
+        Set-Status "$msg Start Fortnite to see it." 'ok'
+    } else {
+        $err = [Vz.Nv]::Reset($FN_EXE_NAME, $NV_ALL_IDS)
+        Write-Log "NVIDIA reset: $(if ($err) { $err } else { 'done' })" $(if ($err) { 'err' } else { 'ok' })
+        if ($err) { Set-Status "NVIDIA: $err" 'err' } else { Set-Status "NVIDIA settings for Fortnite are back to the driver's defaults." 'ok' }
+    }
     Show-Page 'fortnite'
 }
 
@@ -2199,26 +2232,23 @@ function Build-fortnite {
     # NVIDIA potato textures (shown when an NVIDIA card is found)
     if ("$($script:Specs.Gpu)" -match 'NVIDIA') {
         $nv = New-Panel 'NVIDIA potato textures'
-        $ids = [uint32[]]@($NV_POTATO | ForEach-Object { [uint32]$_.Id })
-        $cur = $null
-        if ($script:NvLoaded) { try { $cur = [Vz.Nv]::Read($FN_EXE_NAME, $ids) } catch { } }
-        $on = $false
-        if ($cur) { $on = -not (@(for ($i = 0; $i -lt $ids.Count; $i++) { if ($cur[$i] -ne [int]$NV_POTATO[$i].Value) { 1 } }).Count) }
-        $btns = New-Object Windows.Controls.StackPanel
-        $btns.Orientation = 'Horizontal'
-        [void]$btns.Children.Add((New-Button $(if ($on) { 'Re-apply' } else { 'Apply potato textures' }) -Primary { Set-NvPotato $true }))
-        $undo = New-Button 'Undo' { Set-NvPotato $false }
-        $undo.Margin = T 8 0 0 0
-        [void]$btns.Children.Add($undo)
-        $desc = 'Sets Fortnite''s profile in your NVIDIA driver so textures load at their lowest detail and the card runs at full speed. Things look flat and blurry, but there is less to draw and enemies stand out. The NVIDIA Profile Inspector method from leStripeZ''s video, done for you. Restart Fortnite afterwards.'
-        if (-not $script:NvLoaded -or -not $cur) { $desc += ' (Could not read your NVIDIA settings: ' + $(if ($script:NvLoaded) { [Vz.Nv]::LastError } else { 'driver code did not load' }) + ')' }
-        elseif ($on) { $desc = 'On. ' + $desc }
-        Add-PanelItem $nv (New-Row 'Potato textures' $desc $btns)
-        for ($i = 0; $i -lt $NV_POTATO.Count; $i++) {
-            $item = $NV_POTATO[$i]
-            $match = $cur -and $cur[$i] -eq [int]$item.Value
-            $val = New-Text $item.Text 12.5 $(if ($match) { $C.Good } else { $C.AccentSoft }) 'SemiBold'
-            Add-PanelItem $nv (New-Row $item.Name $(if ($match) { 'Set' } else { 'Not set yet' }) $val)
+        $cur = @{}
+        $readErr = $null
+        if ($script:NvLoaded) {
+            try {
+                $vals = [Vz.Nv]::Read($FN_EXE_NAME, $NV_ALL_IDS)
+                if ($vals) { for ($i = 0; $i -lt $NV_ALL_IDS.Count; $i++) { $cur[[int64]$NV_ALL_IDS[$i]] = ConvertTo-U32 $vals[$i] } } else { $readErr = [Vz.Nv]::LastError }
+            } catch { $readErr = $_.Exception.Message }
+        } else { $readErr = 'driver code did not load' }
+        Add-PanelItem $nv (New-Row 'Pick a method' "Sets Fortnite's profile in your NVIDIA driver, the way NVIDIA Profile Inspector does, without you needing to download it. Textures go flat and blurry, so there is less to draw and enemies stand out. Undo puts the driver back to normal.$(if ($readErr) { " (Could not read your NVIDIA settings: $readErr)" })" (New-Button 'Undo' { Set-NvPotato $null }))
+        foreach ($m in $NV_METHODS) {
+            $active = $cur.Count -and -not @($m.Settings | Where-Object { $cur[[int64](ConvertTo-U32 $_.Id)] -ne (ConvertTo-U32 $_.Value) }).Count
+            $btn = New-Button $(if ($active) { 'Active' } else { "Use $($m.Name)" }) -Primary:(-not $active) { param($s, $e) Set-NvPotato $s.Tag }
+            $btn.Tag = $m
+            $title = if ($active) { "$($m.Name) (on)" } else { $m.Name }
+            $lines = @($m.Settings | ForEach-Object { "$($_.Name): $($_.Text)" })
+            if ($m.Game) { $lines = @('Fortnite: DirectX 12, Nanite on') + $lines }
+            Add-PanelItem $nv (New-Row $title ($m.Desc + "`n" + ($lines -join "`n")) $btn)
         }
         Add-PanelItem $nv (New-Row 'Other NVIDIA settings' 'Shader cache size: Unlimited. Threaded optimization: On. Vertical sync: Off. Low latency mode: Off (use Reflex in Fortnite instead).' (New-Button 'Open NVIDIA Control Panel' { Open-NvidiaPanel }))
         [void]$body.Children.Add($nv)
