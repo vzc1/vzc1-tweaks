@@ -40,3 +40,15 @@ If Windows shows "Windows protected your PC", click **More info**, then **Run an
 
 ## How the exe is built
 GitHub Actions compiles a small C# launcher (`build/Launcher.cs`) that runs `vzc1-optimizations.ps1` inside the exe. Nothing is dropped to disk or downloaded. A new release is published on every push to `main`.
+
+## Terms of use
+
+You have to accept these the first time you open the app. You can read them again from the Tools page.
+
+- This app changes Windows settings, Fortnite's settings file, which apps start with Windows, and can close running programs. You choose every change.
+- It is provided "as is", without any warranty. **You use it at your own risk.**
+- vzc1 and anyone who works on this app are **not responsible** for any damage to your PC, lost data, crashes, lost settings, account problems or bans, or any other problem that comes from using it.
+- Make a restore point before you change anything. The app can do it for you.
+- Not made by, affiliated with or endorsed by Epic Games. It does not change Fortnite's game files.
+
+See [LICENSE](LICENSE) for the full license.

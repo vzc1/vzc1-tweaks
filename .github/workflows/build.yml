@@ -28,11 +28,11 @@ jobs:
           Write-Host "CPU now: $([Vz.Native]::CpuPercent())%"
           # Window layout loads in WPF
           Add-Type -AssemblyName PresentationFramework
-          $x = [regex]::Match($src, "\[xml\]\`$xaml = @'\r?\n(.*?)\r?\n'@", 'Singleline')
-          [xml]$xml = $x.Groups[1].Value
-          $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xml))
-          foreach ($k in 'Switch','Check','Btn','Primary','Seg','Nav','ChromeBtn') { [void]$win.FindResource($k) }
-          Write-Host 'Window layout OK'
+          foreach ($x in [regex]::Matches($src, "\[xml\]\`$(\w+) = @'\r?\n(.*?)\r?\n'@", 'Singleline')) {
+            [xml]$xml = $x.Groups[2].Value
+            $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xml))
+            Write-Host "Window layout $($x.Groups[1].Value) OK"
+          }
 
       - name: Test every tweak on a throwaway Windows machine
         shell: powershell
@@ -74,7 +74,7 @@ jobs:
 
       - name: Package script version
         shell: powershell
-        run: Compress-Archive -Path vzc1-optimizations.ps1, Run-vzc1-optimizations.bat, README.md -DestinationPath vzc1-optimizations-script.zip
+        run: Compress-Archive -Path vzc1-optimizations.ps1, Run-vzc1-optimizations.bat, README.md, LICENSE -DestinationPath vzc1-optimizations-script.zip
 
       - uses: actions/upload-artifact@v4
         with:

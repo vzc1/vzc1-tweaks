@@ -2084,6 +2084,7 @@ function Build-tools {
             Set-Status 'Restore point created.' 'ok'
         } catch { Set-Status "Couldn't create a restore point: $($_.Exception.Message)" 'err' }
     }))
+    Add-PanelItem $panel (New-Row 'Terms of use' 'The terms you agreed to the first time you opened the app.' (New-Button 'Read' { [void](Show-Terms -ReadOnly) }))
     Add-PanelItem $panel (New-Row 'Updates' "You're on version $APP_VERSION. Checks GitHub for a newer release and installs it." (New-Button 'Check for updates' { if ($upd.Latest -and (Test-NewerVersion $upd.Latest)) { Install-Update } else { Start-UpdateCheck } }))
     Add-PanelItem $panel (New-Row 'Undo all tweaks' 'Switches every tweak on the Tweaks page back off.' (New-Button 'Undo all' {
         $r = [Windows.MessageBox]::Show('Switch every tweak back off?', $APP_NAME, 'YesNo', 'Question')
@@ -2117,5 +2118,134 @@ $window.Add_Closed({
     if ($script:Runspace) { try { $script:Runspace.PS.Stop(); $script:Runspace.RS.Close() } catch { } }
 })
 $window.Add_ContentRendered({ Go-Page 'home'; Start-UpdateCheck -Quiet })
+
+# ---------- Terms of use ----------
+$TERMS_VERSION = 1
+$TERMS_FILE = Join-Path $DATA_DIR "terms-accepted-v$TERMS_VERSION.txt"
+$TERMS_TEXT = @(
+    @('What this app does', "vzc1's optimizations changes Windows settings, Fortnite's settings file, which apps start with Windows, and can close programs that are running. You choose every change it makes."),
+    @('Use it at your own risk', 'This app is provided "as is", without any warranty of any kind. You use it entirely at your own risk.'),
+    @('No responsibility for damage', 'vzc1 and anyone who works on this app are not responsible for any damage to your PC, lost data, crashes, lost settings, lost game progress, account problems or bans, or any other problem that comes from using it.'),
+    @('Make a restore point first', 'Every tweak can be switched back off, and the app can make a Windows restore point before it changes anything. Make one before you start, so you can undo everything if something goes wrong.'),
+    @('Fortnite and Epic Games', "This app is not made by, affiliated with or endorsed by Epic Games. It only changes Windows settings and Fortnite's own settings file. It does not change Fortnite's game files. You are responsible for following Epic's rules."),
+    @('Agreeing', 'By clicking I agree, you confirm you have read these terms and accept them.')
+)
+
+function Show-Terms([switch]$ReadOnly) {
+    [xml]$tx = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Terms of use" Width="620" Height="640" WindowStartupLocation="CenterScreen"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent" ResizeMode="NoResize"
+        FontFamily="Segoe UI Variable Text, Segoe UI" TextOptions.TextFormattingMode="Display">
+  <Window.Resources>
+    <LinearGradientBrush x:Key="OrangeGrad" StartPoint="0,0" EndPoint="1,0">
+      <GradientStop Color="#FF9B4A" Offset="0"/>
+      <GradientStop Color="#FF6A13" Offset="1"/>
+    </LinearGradientBrush>
+    <Style x:Key="Btn" TargetType="Button">
+      <Setter Property="Foreground" Value="#F3EEEA"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="B" Background="#1A1512" BorderBrush="#3A2F27" BorderThickness="1" CornerRadius="8" Padding="22,10">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#FF7A1A"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="Primary" TargetType="Button">
+      <Setter Property="Foreground" Value="#FFFFFF"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="B" Background="{StaticResource OrangeGrad}" CornerRadius="8" Padding="22,10">
+              <Border.Effect><DropShadowEffect Color="#FF6A13" BlurRadius="18" ShadowDepth="0" Opacity="0.45"/></Border.Effect>
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="B" Property="Opacity" Value="0.35"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+  <Border CornerRadius="12" Background="#0E0C0B" BorderBrush="#2B231C" BorderThickness="1">
+    <Grid Margin="30,26,30,24">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+      <StackPanel x:Name="Head" Background="Transparent">
+        <StackPanel Orientation="Horizontal">
+          <Border Width="34" Height="34" CornerRadius="8" Background="{StaticResource OrangeGrad}">
+            <TextBlock Text="V" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Black" FontSize="19" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <TextBlock Text="Terms of use" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="24" Foreground="White" Margin="12,0,0,0" VerticalAlignment="Center"/>
+        </StackPanel>
+        <TextBlock Text="Please read this before you use the app." FontSize="13" Foreground="#A39B94" Margin="0,8,0,16"/>
+      </StackPanel>
+      <Border Grid.Row="1" Background="#15110E" BorderBrush="#2B231C" BorderThickness="1" CornerRadius="12">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="20,16,16,16">
+          <StackPanel x:Name="Body"/>
+        </ScrollViewer>
+      </Border>
+      <CheckBox x:Name="Agree" Grid.Row="2" Margin="2,16,0,0" Foreground="#F3EEEA" FontSize="13" Cursor="Hand">
+        <TextBlock Text="I have read the terms and I accept them" Foreground="#F3EEEA" FontSize="13"/>
+      </CheckBox>
+      <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+        <Button x:Name="Quit" Style="{StaticResource Btn}" Content="EXIT"/>
+        <Button x:Name="Ok" Style="{StaticResource Primary}" Content="I AGREE" Margin="10,0,0,0" IsEnabled="False"/>
+      </StackPanel>
+    </Grid>
+  </Border>
+</Window>
+'@
+    $tw = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $tx))
+    $tbody = $tw.FindName('Body')
+    $conv = New-Object Windows.Media.BrushConverter
+    foreach ($sec in $TERMS_TEXT) {
+        $h = New-Object Windows.Controls.TextBlock
+        $h.Text = $sec[0].ToUpper(); $h.FontSize = 11; $h.FontWeight = 'Bold'
+        $h.Foreground = $conv.ConvertFromString('#FF7A1A'); $h.Margin = New-Object Windows.Thickness 0, 4, 0, 4
+        $p = New-Object Windows.Controls.TextBlock
+        $p.Text = $sec[1]; $p.FontSize = 13; $p.TextWrapping = 'Wrap'; $p.LineHeight = 20
+        $p.Foreground = $conv.ConvertFromString('#D8D0C8'); $p.Margin = New-Object Windows.Thickness 0, 0, 0, 14
+        [void]$tbody.Children.Add($h); [void]$tbody.Children.Add($p)
+    }
+    $tw.FindName('Head').Add_MouseLeftButtonDown({ $tw.DragMove() })
+    $okBtn = $tw.FindName('Ok'); $agree = $tw.FindName('Agree'); $quitBtn = $tw.FindName('Quit')
+    if ($ReadOnly) {
+        $agree.Visibility = 'Collapsed'; $quitBtn.Visibility = 'Collapsed'
+        $okBtn.Content = 'CLOSE'; $okBtn.IsEnabled = $true
+    }
+    $agree.Add_Click({ $okBtn.IsEnabled = [bool]$agree.IsChecked })
+    $script:TermsResult = $false
+    $okBtn.Add_Click({ $script:TermsResult = $true; $tw.Close() })
+    $quitBtn.Add_Click({ $script:TermsResult = $false; $tw.Close() })
+    [void]$tw.ShowDialog()
+    return $script:TermsResult
+}
+
+if (-not (Test-Path -LiteralPath $TERMS_FILE)) {
+    if (-not (Show-Terms)) { exit }
+    try {
+        if (-not (Test-Path $DATA_DIR)) { New-Item -ItemType Directory -Path $DATA_DIR -Force | Out-Null }
+        Set-Content -LiteralPath $TERMS_FILE -Value "Accepted terms v$TERMS_VERSION on $(Get-Date -Format s) with app version $APP_VERSION"
+    } catch { }
+}
 
 [void]$window.ShowDialog()
