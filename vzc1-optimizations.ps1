@@ -295,6 +295,16 @@ try { Add-Type -TypeDefinition $NV_SOURCE -ErrorAction Stop; $script:NvLoaded = 
 
 # Fortnite's NVIDIA potato profile: setting ID, name, value, what it means
 $NV_METHODS = @(
+    @{ Key = 'martoz'; Name = 'Martoz method'
+       Desc = "Martoz's original potato method, the one BenFN's video is based on. Same flat 0x45 textures with 8x sparse grid, but Fortnite stays in Performance mode with Reflex On + Boost, which has much less input delay than DirectX 12."
+       Game = @{ Mode = 'perf'; Reflex = '2' }
+       Settings = @(
+        @{ Id = 0x00738E8F; Name = 'Texture LOD bias (DirectX)'; Value = 0x45; Text = '0x00000045, flat potato textures' }
+        @{ Id = 0x0019BB68; Name = 'Negative LOD bias'; Value = 0x01; Text = 'Clamp' }
+        @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = [int]0xFFFFFFF6; Text = 'High quality' }
+        @{ Id = 0x10D48A85; Name = 'Transparency supersampling'; Value = 0x38; Text = '8x Sparse Grid Supersampling' }
+        @{ Id = 0x00638E8F; Name = 'LOD bias auto-adjust'; Value = 0x00; Text = 'Off, so the driver keeps the LOD bias above' }
+       ) }
     @{ Key = 'benfn'; Name = 'BenFN method'
        Desc = "From BenFN's potato graphics video (method first shown by Martoz). Very flat textures with the ground and objects still showing properly. Also switches Fortnite to DirectX 12 with Nanite on, which this method needs."
        Game = @{ Mode = 'dx12'; Nanite = $true }
@@ -2473,6 +2483,15 @@ function Set-NvLastMethod($key) {
     } catch { }
 }
 
+function Get-NvGameText($game) {
+    $parts = @()
+    if ($game.Mode -eq 'dx12') { $parts += 'DirectX 12' } elseif ($game.Mode -eq 'perf') { $parts += 'Performance mode' }
+    if ($game.Nanite) { $parts += 'Nanite on' }
+    if ($game.Reflex -eq '2') { $parts += 'Reflex On + Boost' }
+    if ($game.Lowest) { $parts += 'everything else lowest' }
+    $parts -join ', '
+}
+
 function Set-NvPotato($method) {
     if (-not $script:NvLoaded) { Set-Status "The NVIDIA driver code couldn't load on this PC." 'err'; return }
     if ($method) {
@@ -2492,9 +2511,11 @@ function Set-NvPotato($method) {
         if ($method.Game -and $script:Fn) {
             if ($method.Game.Lowest) { Set-FortnitePro }
             if ($method.Game.Mode) { Set-SegValue $script:Fn.Mode $method.Game.Mode }
+            if ($method.Game.Reflex) { Set-SegValue $script:Fn.Reflex $method.Game.Reflex }
             if ($method.Game.Nanite) { $script:Fn.Nanite.IsChecked = $false }
-            if (Test-FortniteRunning) { $msg += ' Close Fortnite, then press Apply to Fortnite so it switches to DirectX 12 with Nanite on.' }
-            else { Save-FortniteSettings; $msg += ' Fortnite is set to DirectX 12 with Nanite on.' }
+            $gameText = Get-NvGameText $method.Game
+            if (Test-FortniteRunning) { $msg += " Close Fortnite, then press Apply to Fortnite so it switches to $gameText." }
+            else { Save-FortniteSettings; $msg += " Fortnite is set to $gameText." }
         }
         Set-Status "$msg Start Fortnite to see it." 'ok'
     } else {
@@ -2637,7 +2658,7 @@ function Build-fortnite {
             $btn.Tag = $m
             $title = if ($active) { "$($m.Name) (on)" } else { $m.Name }
             $lines = @($m.Settings | ForEach-Object { "$($_.Name): $($_.Text)" })
-            if ($m.Game) { $lines = @("Fortnite: DirectX 12, Nanite on$(if ($m.Game.Lowest) { ', everything else lowest' })") + $lines }
+            if ($m.Game) { $lines = @("Fortnite: $(Get-NvGameText $m.Game)") + $lines }
             Add-PanelItem $nv (New-Row $title ($m.Desc + "`n" + ($lines -join "`n")) $btn)
         }
         Add-PanelItem $nv (New-Row 'Other NVIDIA settings' 'Shader cache size: Unlimited. Threaded optimization: On. Vertical sync: Off. Low latency mode: Off (use Reflex in Fortnite instead).' (New-Button 'Open NVIDIA Control Panel' { Open-NvidiaPanel }))
