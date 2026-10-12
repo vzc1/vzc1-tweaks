@@ -267,13 +267,34 @@ $NV_METHODS = @(
         @{ Id = 0x00638E8F; Name = 'LOD bias auto-adjust'; Value = 0x00; Text = 'Off, so the driver keeps the LOD bias above' }
        ) }
     @{ Key = 'kxng'; Name = 'Kxng method'
-       Desc = "From Kxng's potato graphics video. Flat textures through the driver, with Fortnite on DirectX 12, Nanite on so floors stay visible, and every other graphics setting on lowest. Kxng warns that enemies can blend into the pixelated builds."
+       Desc = "From Kxng's potato graphics video. Flat textures through the driver, with Fortnite on DirectX 12, Nanite on so floors stay visible, and every other graphics setting on lowest. Kxng warns that enemies can blend into the pixelated builds. Transparency antialiasing is added so the LOD bias actually applies."
        Game = @{ Mode = 'dx12'; Nanite = $true; Lowest = $true }
        Settings = @(
         @{ Id = 0x00738E8F; Name = 'Texture LOD bias (DirectX)'; Value = 0x45; Text = '0x45, flat potato textures' }
         @{ Id = 0x20403F79; Name = 'Texture LOD bias (OpenGL)'; Value = 0x45; Text = '0x45' }
         @{ Id = 0x0019BB68; Name = 'Negative LOD bias'; Value = 0x01; Text = 'Clamp' }
         @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = [int]0xFFFFFFF6; Text = 'High quality' }
+        @{ Id = 0x10D48A85; Name = 'Transparency antialiasing'; Value = 0x08; Text = 'AA mode replay: mode all, needed for the LOD bias to apply' }
+        @{ Id = 0x00638E8F; Name = 'LOD bias auto-adjust'; Value = 0x00; Text = 'Off' }
+       ) }
+    @{ Key = 'bwfn'; Name = 'BwFN Graphics'
+       Desc = "BwFN's own look. Very flat 0x45 textures with high quality filtering, Fortnite on DirectX 12 with Nanite on."
+       Game = @{ Mode = 'dx12'; Nanite = $true }
+       Settings = @(
+        @{ Id = 0x10D48A85; Name = 'Transparency antialiasing'; Value = 0x08; Text = 'AA mode replay: mode all' }
+        @{ Id = 0x00738E8F; Name = 'Texture LOD bias (DirectX)'; Value = 0x45; Text = '0x45, flat potato textures' }
+        @{ Id = 0x20403F79; Name = 'Texture LOD bias (OpenGL)'; Value = 0x45; Text = '0x45' }
+        @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = [int]0xFFFFFFF6; Text = 'High quality' }
+        @{ Id = 0x00638E8F; Name = 'LOD bias auto-adjust'; Value = 0x00; Text = 'Off' }
+       ) }
+    @{ Key = 'bwfnplayable'; Name = 'BwFN Playable Potato'
+       Desc = "BwFN's lighter version. Textures at +3 so things still look like Fortnite, with every other setting on lowest and Reflex On + Boost. DirectX 12 with Nanite on."
+       Game = @{ Mode = 'dx12'; Nanite = $true; Lowest = $true }
+       Settings = @(
+        @{ Id = 0x10D48A85; Name = 'Transparency antialiasing'; Value = 0x08; Text = 'AA mode replay: mode all' }
+        @{ Id = 0x00738E8F; Name = 'Texture LOD bias (DirectX)'; Value = 0x18; Text = '+3' }
+        @{ Id = 0x20403F79; Name = 'Texture LOD bias (OpenGL)'; Value = 0x30; Text = '+3' }
+        @{ Id = 0x00638E8F; Name = 'LOD bias auto-adjust'; Value = 0x00; Text = 'Off' }
        ) }
     @{ Key = 'classic'; Name = 'Classic +3'
        Desc = "The older Profile Inspector method from leStripeZ's video. Textures at +3 LOD bias, high performance filtering and full GPU power. Keeps your rendering mode as it is."
