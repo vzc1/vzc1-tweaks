@@ -2132,6 +2132,15 @@ function Get-PresetSummary($st) {
     $r3 = if ($st.Res3D) { "3D resolution $($st.Res3D)%" } else { '' }
     (@($mode, $cap, $r3) | Where-Object { $_ }) -join ', '
 }
+$NV_LAST_FILE = Join-Path $DATA_DIR 'nvidia-method.txt'
+function Get-NvLastMethod { try { (Get-Content -LiteralPath $NV_LAST_FILE -ErrorAction Stop | Select-Object -First 1).Trim() } catch { $null } }
+function Set-NvLastMethod($key) {
+    try {
+        if ($key) { if (-not (Test-Path $DATA_DIR)) { New-Item -ItemType Directory -Path $DATA_DIR -Force | Out-Null }; Set-Content -LiteralPath $NV_LAST_FILE -Value $key }
+        else { Remove-Item -LiteralPath $NV_LAST_FILE -Force -ErrorAction SilentlyContinue }
+    } catch { }
+}
+
 function Set-NvPotato($method) {
     if (-not $script:NvLoaded) { Set-Status "The NVIDIA driver code couldn't load on this PC." 'err'; return }
     if ($method) {
@@ -2146,6 +2155,7 @@ function Set-NvPotato($method) {
             else { Write-Log "NVIDIA read back failed: $([Vz.Nv]::LastError)" 'err' }
         } catch { Write-Log "NVIDIA read back error: $($_.Exception.Message)" 'err' }
         if ($err) { Set-Status "NVIDIA: $err" 'err'; Show-Page 'fortnite'; return }
+        Set-NvLastMethod $method.Key
         $msg = "$($method.Name) set in your NVIDIA driver."
         if ($method.Game -and $script:Fn) {
             if ($method.Game.Lowest) { Set-FortnitePro }
@@ -2156,7 +2166,8 @@ function Set-NvPotato($method) {
         }
         Set-Status "$msg Start Fortnite to see it." 'ok'
     } else {
-        $err = [Vz.Nv]::Reset($FN_EXE_NAME, $NV_ALL_IDS)
+ $err = [Vz.Nv]::Reset($FN_EXE_NAME, $NV_ALL_IDS)
+        if (-not $err) { Set-NvLastMethod $null }
         Write-Log "NVIDIA reset: $(if ($err) { $err } else { 'done' })" $(if ($err) { 'err' } else { 'ok' })
         if ($err) { Set-Status "NVIDIA: $err" 'err' } else { Set-Status "NVIDIA settings for Fortnite are back to the driver's defaults." 'ok' }
     }
@@ -2282,8 +2293,10 @@ function Build-fortnite {
             } catch { $readErr = $_.Exception.Message }
         } else { $readErr = 'driver code did not load' }
         Add-PanelItem $nv (New-Row 'Pick a method' "Sets Fortnite's profile in your NVIDIA driver, the way NVIDIA Profile Inspector does, without you needing to download it. Textures go flat and blurry, so there is less to draw and enemies stand out. Undo puts the driver back to normal.$(if ($readErr) { " (Could not read your NVIDIA settings: $readErr)" })" (New-Button 'Undo' { Set-NvPotato $null }))
+        $lastKey = Get-NvLastMethod
         foreach ($m in $NV_METHODS) {
-            $active = $cur.Count -and -not @($m.Settings | Where-Object { $cur[[int64](ConvertTo-U32 $_.Id)] -ne (ConvertTo-U32 $_.Value) }).Count
+            # A method is on only if it was the one you picked last and the driver still has its values
+            $active = ($m.Key -eq $lastKey) -and $cur.Count -and -not @($m.Settings | Where-Object { $cur[[int64](ConvertTo-U32 $_.Id)] -ne (ConvertTo-U32 $_.Value) }).Count
             $btn = New-Button $(if ($active) { 'Active' } else { "Use $($m.Name)" }) -Primary:(-not $active) { param($s, $e) Set-NvPotato $s.Tag }
             $btn.Tag = $m
             $title = if ($active) { "$($m.Name) (on)" } else { $m.Name }
