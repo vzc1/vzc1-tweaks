@@ -82,6 +82,22 @@ jobs:
             build\Launcher.gen.cs
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path vzc1-optimizations.exe)) { throw 'Build failed' }
 
+      - name: Build installer
+        shell: powershell
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          if (-not (Test-Path $iscc)) { throw 'Inno Setup not found' }
+          & $iscc /Qp "/DMyAppVersion=5.0.${{ github.run_number }}" build\installer.iss
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path vzc1-optimizations-setup.exe)) { throw 'Installer build failed' }
+
+      - name: Test the undo-all mode used by the uninstaller
+        shell: powershell
+        run: |
+          $p = Start-Process -FilePath .\vzc1-optimizations.exe -ArgumentList '--undo-all' -PassThru -Wait
+          Write-Host "undo-all exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw 'undo-all failed' }
+
       - name: Package script version
         shell: powershell
         run: Compress-Archive -Path vzc1-optimizations.ps1, Run-vzc1-optimizations.bat, README.md, LICENSE -DestinationPath vzc1-optimizations-script.zip
@@ -90,6 +106,7 @@ jobs:
         with:
           name: vzc1-optimizations
           path: |
+            vzc1-optimizations-setup.exe
             vzc1-optimizations.exe
             vzc1-optimizations-script.zip
 
@@ -101,11 +118,14 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |
-            Download **vzc1-optimizations.exe** below and run it.
+            **New install:** download **vzc1-optimizations-setup.exe** below and run it. It adds a Start menu shortcut (and a desktop one if you want) and an uninstaller in Windows Settings.
+
+            **Already have the app?** Click Update in the app's sidebar. Or download **vzc1-optimizations.exe** to run it without installing.
 
             If Windows SmartScreen shows "Windows protected your PC", click **More info** then **Run anyway**. That shows up for any new app that isn't code-signed.
 
             Prefer not to run an exe? Download **vzc1-optimizations-script.zip**, unzip it, and double-click `Run-vzc1-optimizations.bat`. Same app, and you can read every line of it.
           files: |
+            vzc1-optimizations-setup.exe
             vzc1-optimizations.exe
             vzc1-optimizations-script.zip

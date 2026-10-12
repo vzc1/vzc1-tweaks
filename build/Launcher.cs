@@ -18,8 +18,9 @@ namespace Vzc1Optimizations
     static class Program
     {
         [STAThread]
-        static int Main()
+        static int Main(string[] args)
         {
+            Environment.SetEnvironmentVariable("VZC1_ARGS", string.Join(" ", args));
             string script;
             using (Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream("app.ps1"))
             using (StreamReader r = new StreamReader(s))

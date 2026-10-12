@@ -937,6 +937,14 @@ function Stop-GameBoost {
     Set-Status "Game Boost off. Power plan put back and $reopened app$(if ($reopened -ne 1) { 's' }) reopened." 'ok'
 }
 
+function Get-UninstallerPath {
+    foreach ($root in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') {
+        $u = Get-Reg "$root\{8A3C2E51-6F1D-4B7A-9C2E-1D5F0B7A9E44}_is1" 'UninstallString'
+        if ($u) { return ($u -replace '"', '') }
+    }
+    return $null
+}
+
 function Format-Bytes($b) { if ($b -ge 1GB) { '{0:0.0} GB' -f ($b / 1GB) } else { '{0:0} MB' -f ($b / 1MB) } }
 # ---------- Fortnite server map ----------
 # Each matchmaking region has an official Epic ping host. Each host resolves to
@@ -1130,6 +1138,29 @@ $PingWorker = {
     }
 }
 
+
+# ---------- Uninstall helper: undo everything without opening the app ----------
+$cliArgs = "$env:VZC1_ARGS $($args -join ' ')"
+if ($cliArgs -match '--undo-all') {
+    $undoLog = @()
+    foreach ($t in $Tweaks) {
+        try {
+            $ok = $true; if ($t.Available) { $ok = [bool](& $t.Available) }
+            if ($ok -and [bool](& $t.Get)) { & $t.Off; $undoLog += "off: $($t.Id)" }
+        } catch { $undoLog += "failed: $($t.Id) $($_.Exception.Message)" }
+    }
+    if ($script:NvLoaded) {
+        try {
+            $ids = [uint32[]]@($NV_METHODS | ForEach-Object { $_.Settings } | ForEach-Object { [uint32]([int64]$_.Id -band [int64]4294967295) } | Sort-Object -Unique)
+            $e = [Vz.Nv]::Reset($FN_EXE_NAME, $ids); $undoLog += "nvidia reset: $(if ($e) { $e } else { 'done' })"
+        } catch { $undoLog += "nvidia: $($_.Exception.Message)" }
+    }
+    try {
+        if (-not (Test-Path $DATA_DIR)) { New-Item -ItemType Directory -Path $DATA_DIR -Force | Out-Null }
+        Add-Content -LiteralPath (Join-Path $DATA_DIR 'log.txt') -Value ("{0} UNDO-ALL {1}" -f (Get-Date -Format 's'), ($undoLog -join '; '))
+    } catch { }
+    return
+}
 
 # ---------- UI ----------
 Add-Type -AssemblyName Microsoft.VisualBasic
@@ -3024,6 +3055,15 @@ function Build-tools {
     }))
     if ($script:DevMode) {
         Add-PanelItem $panel (New-Row 'Developer mode' 'Developer mode is unlocked on this PC.' (New-Button 'Turn off' { Request-DevMode; Show-Page 'tools' }))
+    }
+    $uninst = Get-UninstallerPath
+    if ($uninst) {
+        Add-PanelItem $panel (New-Row 'Uninstall' 'Removes the app from this PC. It asks if you want every tweak undone first.' (New-Button 'Uninstall' {
+            $r = [Windows.MessageBox]::Show("Uninstall vzc1's optimizations?", $APP_NAME, 'YesNo', 'Question')
+            if ($r -ne 'Yes') { return }
+            Start-Process -FilePath (Get-UninstallerPath)
+            $window.Close()
+        }))
     }
     Add-PanelItem $panel (New-Row 'Terms of use' 'The terms you agreed to the first time you opened the app.' (New-Button 'Read' { [void](Show-Terms -ReadOnly) }))
     Add-PanelItem $panel (New-Row 'Updates' "You're on version $APP_VERSION. Checks GitHub for a newer release and installs it." (New-Button 'Check for updates' { if ($upd.Latest -and (Test-NewerVersion $upd.Latest)) { Install-Update } else { Start-UpdateCheck } }))

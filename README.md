@@ -4,7 +4,9 @@ A Windows app for getting more FPS and less lag in Fortnite. Every change can be
 
 ## Download
 
-Get **vzc1-optimizations.exe** from the [latest release](../../releases/latest) and run it. It asks for admin because most of these are system settings.
+Get **vzc1-optimizations-setup.exe** from the [latest release](../../releases/latest) and run it. It installs the app with a Start menu shortcut (and a desktop shortcut if you want one), and adds an uninstaller to Windows Settings > Apps. When you uninstall, it asks whether to undo every tweak first.
+
+Don't want to install? Download **vzc1-optimizations.exe** and run it directly. Either way it asks for admin because most of these are system settings.
 
 If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**. That screen appears for any new app that isn't code-signed. You can also download `vzc1-optimizations-script.zip` instead and double-click `Run-vzc1-optimizations.bat`. It's the same app as a script you can read.
 
