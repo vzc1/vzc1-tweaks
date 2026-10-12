@@ -175,6 +175,8 @@ namespace Vz {
                 app.version = (uint)(Marshal.SizeOf(typeof(App)) | (4 << 16));
                 r = Fn<FFindApp>(0xEEE566B2, 0)(session, new StringBuilder(exe), ref profile, ref app);
                 if (r != 0) return "Your NVIDIA driver has no Fortnite profile (code " + r + "). Update your NVIDIA driver and try again.";
+                if (app.appName == null || app.appName.IndexOf("fortnite", StringComparison.OrdinalIgnoreCase) < 0)
+                    return "The driver profile found is not Fortnite's, so nothing was changed.";
                 for (int i = 0; i < ids.Length; i++) {
                     if (mode == 0) {
                         Setting st = NewSetting();
@@ -579,7 +581,16 @@ function Save-IniLines($lines) {
     $f = Get-Item -LiteralPath $FN_INI
     if ($f.IsReadOnly) { $f.IsReadOnly = $false }
     [IO.File]::WriteAllLines($FN_INI, [string[]]$lines.ToArray(), (New-Object System.Text.UTF8Encoding $false))
-    if ($script:LockSw -and $script:LockSw.IsChecked) { (Get-Item -LiteralPath $FN_INI).IsReadOnly = $true }
+}
+function Start-Fortnite {
+    if (Test-FortniteRunning) { Set-Status 'Fortnite is already running.' 'ok'; return }
+    try {
+        Start-Process 'com.epicgames.launcher://apps/fn%3A4fe75bbc5a674f4f9b356b5c90567da5%3AFortnite?action=launch&silent=true'
+        Set-Status 'Starting Fortnite through the Epic Games Launcher...' 'ok'
+        Write-Log 'Started Fortnite'
+    } catch {
+        Set-Status "Couldn't start Fortnite. Is the Epic Games Launcher installed? ($($_.Exception.Message))" 'err'
+    }
 }
 function Test-FortniteRunning { [bool](Get-Process -Name 'FortniteClient-Win64-Shipping' -ErrorAction SilentlyContinue) }
 
@@ -1154,6 +1165,7 @@ Add-Type -AssemblyName Microsoft.VisualBasic
                   <Button x:Name="SideAll" Style="{StaticResource Primary}" Content="TURN ON ALL" Padding="10,8"/>
                 </StackPanel>
               </Border>
+              <Button x:Name="SideStart" Style="{StaticResource Primary}" Content="START FORTNITE" Padding="10,9" Margin="0,0,0,8"/>
               <Button x:Name="SideUpdate" Style="{StaticResource Btn}" Content="CHECK FOR UPDATES" Padding="10,8" Margin="0,0,0,8"/>
               <Button x:Name="SideExit" Style="{StaticResource Btn}" Content="EXIT" Padding="10,8"/>
             </StackPanel>
@@ -1384,6 +1396,7 @@ $window.Add_KeyDown({
 (W 'BtnMin').Add_Click({ $window.WindowState = 'Minimized' })
 (W 'BtnClose').Add_Click({ $window.Close() })
 (W 'SideExit').Add_Click({ $window.Close() })
+(W 'SideStart').Add_Click({ Start-Fortnite })
 (W 'SideSub').Text = "Version $APP_VERSION"
 
 function Get-ConnectionType {
@@ -1932,7 +1945,7 @@ function Build-home {
     $good = @($checks | Where-Object { $_.State -eq 'good' }).Count
     $left = $checks.Count - $good
     $sub = if ($left -eq 0) { "Everything checks out. Go play." } elseif ($left -eq 1) { '1 thing to fix before you play.' } else { "$left things to fix before you play." }
-    Add-PageHeader $body 'Dashboard' $sub
+    Add-PageHeader $body 'Dashboard' $sub (New-Button 'Start Fortnite' -Primary { Start-Fortnite })
 
     # Live monitor
     $live = New-Panel 'Live system'
@@ -2130,7 +2143,7 @@ function Open-NvidiaPanel {
 
 function Build-fortnite {
     $body = $Bodies['fortnite']; $body.Children.Clear()
-    Add-PageHeader $body 'Fortnite settings' "Changes Fortnite's own settings file. Close Fortnite first, because it rewrites the file when it exits. Your original file is backed up the first time you apply."
+    Add-PageHeader $body 'Fortnite settings' "Changes Fortnite's own settings file. Close Fortnite first, because it rewrites the file when it exits. Your original file is backed up the first time you apply." (New-Button 'Start Fortnite' -Primary { Start-Fortnite })
 
     $lines = $null; try { $lines = Get-IniLines } catch { }
     if (-not $lines) {
@@ -2190,17 +2203,6 @@ function Build-fortnite {
     Add-PanelItem $pro (New-Row 'Pro preset' 'What most top-earning Fortnite pros run: Performance mode, fullscreen, Reflex On + Boost, FPS capped at your monitor, 3D resolution 100%, and view distance, meshes, textures, effects and post-processing on low with shadows and anti-aliasing off. Pick it, then press Apply to Fortnite.' (New-Button 'Use pro preset' -Primary { Set-FortnitePro }))
     [void]$body.Children.Add($pro)
 
-    # Potato levels
-    $pot = New-Panel 'Potato graphics'
-    foreach ($lvl in $POTATO_LEVELS) {
-        $b = New-Button "Use $($lvl.Name)" -Primary { param($s, $e) Set-FortnitePotato $s.Tag }
-        $b.Tag = $lvl
-        Add-PanelItem $pot (New-Row $lvl.Name $lvl.Desc $b)
-    }
-    $isLocked = $false; try { $isLocked = (Get-Item -LiteralPath $FN_INI).IsReadOnly } catch { }
-    $script:LockSw = New-Switch $isLocked
-    Add-PanelItem $pot (New-Row 'Lock the settings file after applying' 'Makes the settings file read-only so Fortnite cannot undo the potato values after an update. While it is locked, changes you make in the game menu will not save. Apply again with this off to unlock it.' $script:LockSw)
-    [void]$body.Children.Add($pot)
 
     # Pro player presets (from prosettings.net)
     $pp = New-Panel 'Pro player presets'
@@ -2302,20 +2304,6 @@ function Build-fortnite {
     $restore.IsEnabled = Test-Path -LiteralPath $FN_INI_ORIG
     [void]$bar.Children.Add($apply); [void]$bar.Children.Add($rec); [void]$bar.Children.Add($restore)
     [void]$body.Children.Add($bar)
-}
-
-$POTATO_LEVELS = @(
-    @{ Name = 'Potato Lite'; Res3D = 75; Res = $null; View = '1'
-       Desc = 'For mid-range laptops. Performance mode, everything on lowest, 3D resolution 75%, view distance Medium. Still easy to see.' }
-    @{ Name = 'Potato'; Res3D = 50; Res = $null; View = '0'
-       Desc = 'For weak PCs that struggle to hold 60 FPS. Performance mode, everything on lowest, 3D resolution 50%, view distance Near. Blurry, but a lot faster.' }
-    @{ Name = 'Ultra Potato'; Res3D = 35; Res = '1280x720'; View = '0'
-       Desc = 'Last resort for very old PCs. Performance mode, everything on lowest, 3D resolution 35%, 1280 x 720, view distance Near. It looks rough, but it is the most FPS Fortnite can give.' }
-)
-function Set-FortnitePotato($lvl) {
-    Set-FortnitePro
-    Set-FnState @{ Res3D = $lvl.Res3D; View = $lvl.View; Res = $lvl.Res }
-    Set-Status "$($lvl.Name) picked. Press Apply to Fortnite to save it. On an NVIDIA card, add the potato textures below for the flattest look."
 }
 
 function Set-FortnitePro {
