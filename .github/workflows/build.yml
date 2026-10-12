@@ -29,6 +29,8 @@ jobs:
           Add-Type -TypeDefinition $nvm.Groups[1].Value
           Write-Host "NVIDIA code compiled. Driver on this machine: $([Vz.Nv]::Available()) ($([Vz.Nv]::LastError))"
           Write-Host "NVIDIA read without a driver returns: $([Vz.Nv]::Read('FortniteClient-Win64-Shipping.exe', [uint32[]]@(0x00738E8F)))"
+          $trimOk = 0; foreach ($p in Get-Process) { try { if ([Vz.Mem]::Trim($p.Handle)) { $trimOk++ } } catch { } }
+          Write-Host "Memory tools: trimmed $trimOk processes, standby purge result $([Vz.Mem]::PurgeStandby()) (0 = success)"
 
           Write-Host "CPU now: $([Vz.Native]::CpuPercent())%"
           # Window layout loads in WPF

@@ -211,6 +211,41 @@ namespace Vz {
             return Run(exe, ids, null, 2, o) == "" ? o : null;
         }
     }
+
+    // Memory tools: trim what other apps hold but are not using, and clear the standby cache.
+    public static class Mem {
+        [DllImport("psapi.dll", SetLastError = true)] static extern bool EmptyWorkingSet(IntPtr process);
+        [DllImport("ntdll.dll")] static extern int NtSetSystemInformation(int infoClass, ref int info, int length);
+        [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+        [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool LookupPrivilegeValue(string system, string name, out long luid);
+        [DllImport("advapi32.dll", SetLastError = true)] static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TokenPrivileges state, int length, IntPtr previous, IntPtr returnLength);
+        [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        struct TokenPrivileges { public int Count; public long Luid; public int Attributes; }
+
+        public static bool EnablePrivilege(string name) {
+            IntPtr token;
+            if (!OpenProcessToken(GetCurrentProcess(), 0x28, out token)) return false;
+            try {
+                long luid;
+                if (!LookupPrivilegeValue(null, name, out luid)) return false;
+                TokenPrivileges tp = new TokenPrivileges();
+                tp.Count = 1; tp.Luid = luid; tp.Attributes = 2;
+                return AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero) && Marshal.GetLastWin32Error() == 0;
+            } finally { CloseHandle(token); }
+        }
+
+        public static bool Trim(IntPtr process) { return EmptyWorkingSet(process); }
+
+        // 0 = success. Needs admin.
+        public static int PurgeStandby() {
+            EnablePrivilege("SeProfileSingleProcessPrivilege");
+            int command = 4; // MemoryPurgeStandbyList
+            return NtSetSystemInformation(80, ref command, 4); // SystemMemoryListInformation
+        }
+    }
 }
 '@
 $script:NvLoaded = $false
@@ -613,6 +648,25 @@ function Get-HeavyApps {
         Sort-Object Bytes -Descending |
         Select-Object -First 15
 }
+$TRIM_SKIP = @('idle','system','registry','memory compression','smss','csrss','wininit','winlogon','services','lsass','dwm','audiodg',
+    'fortniteclient-win64-shipping','fortnitelauncher','easyanticheat','easyanticheat_eos','beservice','msmpeng','nissrv','securityhealthservice')
+function Invoke-FreeMemory {
+    $ci = New-Object Microsoft.VisualBasic.Devices.ComputerInfo
+    $before = [double]$ci.AvailablePhysicalMemory
+    $trimmed = 0; $failed = 0
+    foreach ($p in Get-Process -ErrorAction SilentlyContinue) {
+        if ($TRIM_SKIP -contains $p.ProcessName.ToLower()) { continue }
+        try { if ([Vz.Mem]::Trim($p.Handle)) { $trimmed++ } else { $failed++ } } catch { $failed++ }
+    }
+    $purge = -1
+    try { $purge = [Vz.Mem]::PurgeStandby() } catch { }
+    Start-Sleep -Milliseconds 400
+    $after = [double](New-Object Microsoft.VisualBasic.Devices.ComputerInfo).AvailablePhysicalMemory
+    $freed = [math]::Max(0, $after - $before)
+    Write-Log ("Free memory: trimmed {0} processes ({1} skipped/denied), standby purge result {2}, available {3:0.00} GB -> {4:0.00} GB" -f $trimmed, $failed, $purge, ($before / 1GB), ($after / 1GB))
+    @{ Freed = $freed; Trimmed = $trimmed; Purged = ($purge -eq 0); After = $after }
+}
+
 function Format-Bytes($b) { if ($b -ge 1GB) { '{0:0.0} GB' -f ($b / 1GB) } else { '{0:0} MB' -f ($b / 1MB) } }
 # ---------- Fortnite server map ----------
 # Each matchmaking region has an official Epic ping host. Each host resolves to
@@ -1269,8 +1323,23 @@ function New-Seg($options, $current) {
 function Get-SegValue($seg) { foreach ($b in $seg.Buttons) { if ($b.IsChecked) { return $b.Tag } }; return $null }
 function Set-SegValue($seg, $v) { foreach ($b in $seg.Buttons) { if ("$($b.Tag)" -eq "$v") { $b.IsChecked = $true } } }
 
+# ---------- Activity log ----------
+$LOG_FILE = Join-Path $DATA_DIR 'log.txt'
+$script:LogLines = New-Object System.Collections.ArrayList
+function Write-Log($msg, $kind = 'info') {
+    $line = '{0}  {1,-4}  {2}' -f (Get-Date -Format 'HH:mm:ss'), $kind.ToUpper(), $msg
+    [void]$script:LogLines.Add($line)
+    while ($script:LogLines.Count -gt 500) { $script:LogLines.RemoveAt(0) }
+    try {
+        if (-not (Test-Path $DATA_DIR)) { New-Item -ItemType Directory -Path $DATA_DIR -Force | Out-Null }
+        if ((Test-Path -LiteralPath $LOG_FILE) -and (Get-Item -LiteralPath $LOG_FILE).Length -gt 1MB) { Move-Item -LiteralPath $LOG_FILE -Destination "$LOG_FILE.old" -Force }
+        Add-Content -LiteralPath $LOG_FILE -Value ("{0} {1}" -f (Get-Date -Format 'yyyy-MM-dd'), $line)
+    } catch { }
+}
+
 $Status = W 'Status'
 function Set-Status($msg, $kind = 'info') {
+    Write-Log $msg $kind
     $Status.Text = $msg
     $Status.Foreground = B $(switch ($kind) { 'ok' { $C.Good } 'err' { $C.Bad } default { $C.Muted } })
     $window.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render)
@@ -1278,6 +1347,14 @@ function Set-Status($msg, $kind = 'info') {
 
 # ---------- Window chrome ----------
 (W 'TitleBar').Add_MouseLeftButtonDown({ $window.DragMove() })
+$window.Add_KeyDown({
+    param($s, $e)
+    if ($e.Key -eq 'D' -and [Windows.Input.Keyboard]::Modifiers -eq ([Windows.Input.ModifierKeys]::Control -bor [Windows.Input.ModifierKeys]::Shift)) {
+        Set-DevMode (-not $script:DevMode)
+        Set-Status $(if ($script:DevMode) { 'Developer mode on. It is in the sidebar under System.' } else { 'Developer mode off.' }) 'ok'
+        if ($script:DevMode) { Go-Page 'dev' }
+    }
+})
 (W 'BtnMin').Add_Click({ $window.WindowState = 'Minimized' })
 (W 'BtnClose').Add_Click({ $window.Close() })
 (W 'SideExit').Add_Click({ $window.Close() })
@@ -1312,6 +1389,7 @@ $NAV = @(
     @{ Id = 'startup';  Label = 'Startup apps';      Icon = [char]0xE7E8 }
     @{ Id = 'apps';     Label = 'Background apps';   Icon = [char]0xE71D }
     @{ Id = 'tools';    Label = 'Tools';             Icon = [char]0xE90F }
+    @{ Id = 'dev';      Label = 'Developer';         Icon = [char]0xEC7A }
 )
 $Pages = @{}; $Bodies = @{}; $NavButtons = @{}
 $PagesGrid = W 'Pages'
@@ -1364,12 +1442,24 @@ foreach ($n in $NAV) {
     [void]$NavList.Children.Add($nb)
     $NavButtons[$n.Id] = $nb
 }
+$DEV_FILE = Join-Path $DATA_DIR 'devmode.txt'
+$script:DevMode = Test-Path -LiteralPath $DEV_FILE
+function Set-DevMode([bool]$on) {
+    $script:DevMode = $on
+    try {
+        if ($on) { if (-not (Test-Path $DATA_DIR)) { New-Item -ItemType Directory -Path $DATA_DIR -Force | Out-Null }; Set-Content -LiteralPath $DEV_FILE -Value 'on' }
+        else { Remove-Item -LiteralPath $DEV_FILE -Force -ErrorAction SilentlyContinue }
+    } catch { }
+    $NavButtons['dev'].Visibility = if ($on) { 'Visible' } else { 'Collapsed' }
+}
+$NavButtons['dev'].Visibility = if ($script:DevMode) { 'Visible' } else { 'Collapsed' }
+
 $script:Built = @{}
 function Go-Page($id) { if ($NavButtons[$id].IsChecked) { Show-Page $id } else { $NavButtons[$id].IsChecked = $true } }
 function Show-Page($id) {
     foreach ($k in $Pages.Keys) { $Pages[$k].Visibility = if ($k -eq $id) { 'Visible' } else { 'Collapsed' } }
     $Pages[$id].ScrollToTop()
-    $always = @('home', 'apps', 'startup', 'fortnite', 'perf', 'net', 'input', 'lowend')
+    $always = @('home', 'apps', 'startup', 'fortnite', 'perf', 'net', 'input', 'lowend', 'dev', 'tools')
     if (-not $script:Built[$id] -or ($always -contains $id)) {
         $window.Cursor = [Windows.Input.Cursors]::Wait
         try {
@@ -1496,6 +1586,7 @@ function Build-TweakPage($id) {
                 if ($want) { & $t.On } else { & $t.Off }
             } catch { Set-Status "$($t.Name) didn't change: $($_.Exception.Message)" 'err'; $failed = $true }
             $now = $false; try { $now = [bool](& $t.Get) } catch { }
+            Write-Log "Tweak $($t.Id): asked $(if ($want) { 'on' } else { 'off' }), now $(if ($now) { 'on' } else { 'off' })" $(if ($now -eq $want) { 'ok' } else { 'err' })
             $s.IsChecked = $now
             if (-not $failed) {
                 if ($now -eq $want) {
@@ -1851,7 +1942,21 @@ $liveTimer.Start()
 # ---------- Custom presets ----------
 $PRESETS_FILE = Join-Path $DATA_DIR 'presets.json'
 $SWITCH_KEYS = @('VSync', 'Blur', 'Shadows', 'Grass', 'Nanite', 'RT', 'Fps')
-$SEG_KEYS = @('Mode', 'Cap', 'Win', 'Reflex', 'Res3D', 'Res')
+$SEG_KEYS = @('Mode', 'Cap', 'Win', 'Reflex', 'Res3D', 'Res', 'View')
+
+# Pro players' settings from prosettings.net (October 2026). Missing values are left unchanged.
+$PRO_PLAYERS = @(
+    @{ Name = 'Martoz'; Hud = 0.75; Summary = 'Windowed fullscreen at 1720 x 1080, 240 FPS, Performance mode, 3D resolution 99%, view distance Medium, textures and meshes Low, Reflex On.'
+       State = @{ Mode = 'perf'; Cap = 240; Win = '1'; Reflex = '1'; Res3D = 99; Res = '1720x1080'; View = '1'; VSync = $true; Blur = $true; Fps = $true } }
+    @{ Name = 'Clix'; Hud = 0.69; Summary = 'Fullscreen at 1920 x 1080, 240 FPS, Performance mode, view distance Medium, textures and meshes Low.'
+       State = @{ Mode = 'perf'; Cap = 240; Win = '0'; Res = '1920x1080'; View = '1'; VSync = $true; Fps = $true } }
+    @{ Name = 'Peterbot'; Hud = 0.90; Summary = 'Windowed fullscreen at 1920 x 1080, 240 FPS, Performance mode, 3D resolution 100%, view distance Far, textures and meshes Low, Reflex On.'
+       State = @{ Mode = 'perf'; Cap = 240; Win = '1'; Reflex = '1'; Res3D = 100; Res = '1920x1080'; View = '3'; VSync = $true; Fps = $true } }
+    @{ Name = 'Mongraal'; Hud = 0.85; Summary = 'Windowed fullscreen at 1920 x 1080, 240 FPS, Performance mode, view distance Far, textures and meshes Low, Reflex On + Boost.'
+       State = @{ Mode = 'perf'; Cap = 240; Win = '1'; Reflex = '2'; Res = '1920x1080'; View = '3'; VSync = $true; Blur = $true; Fps = $true } }
+    @{ Name = 'Bugha'; Hud = $null; Summary = 'Fullscreen at 1920 x 1080, 240 FPS, view distance Far, shadows and anti-aliasing off, textures, effects and post processing Low.'
+       State = @{ Cap = 240; Win = '0'; Res = '1920x1080'; View = '3'; Shadows = $true } }
+)
 function Get-FnState {
     $st = [ordered]@{}
     foreach ($k in $SEG_KEYS) { $st[$k] = Get-SegValue $script:Fn[$k] }
@@ -1859,7 +1964,19 @@ function Get-FnState {
     $st.Pro = [bool]$script:FnPro
     $st
 }
+function Add-SegOption($seg, $label, $value) {
+    if ($seg.Buttons | Where-Object { "$($_.Tag)" -eq "$value" }) { return }
+    $rb = New-Object Windows.Controls.RadioButton
+    $rb.Style = $window.FindResource('Seg')
+    $rb.GroupName = $seg.Buttons[0].GroupName
+    $rb.Content = $label; $rb.Tag = $value
+    [void]$seg.Panel.Children.Add($rb)
+    $seg.Buttons += $rb
+}
 function Set-FnState($st) {
+    if ($null -ne $st.Res3D) { Add-SegOption $script:Fn.Res3D "$($st.Res3D)%" $st.Res3D }
+    if ($st.Res) { Add-SegOption $script:Fn.Res ($st.Res -replace 'x', ' x ') $st.Res }
+    if ($null -ne $st.Cap -and "$($st.Cap)" -ne '0') { Add-SegOption $script:Fn.Cap "$($st.Cap)" $st.Cap }
     foreach ($k in $SEG_KEYS) { if ($null -ne $st.$k) { Set-SegValue $script:Fn[$k] $st.$k } }
     foreach ($k in $SWITCH_KEYS) { if ($null -ne $st.$k) { $script:Fn[$k].IsChecked = [bool]$st.$k } }
 }
@@ -1954,6 +2071,7 @@ function Build-fortnite {
         Reflex = New-Seg @(@('Off', '0'), @('On', '1'), @('On + Boost', '2')) (& $g 'LatencyTweak2')
         Res3D = New-Seg $res3dOpts $res3d
         Res = New-Seg $resOpts $curRes
+        View = New-Seg @(@('Near', '0'), @('Medium', '1'), @('High', '2'), @('Far', '3'), @('Epic', '4')) (Get-IniValue $lines 'ScalabilityGroups' 'sg.ViewDistanceQuality')
         VSync = New-Switch ((& $g 'bUseVSync') -ne 'True')
         Blur  = New-Switch ((& $g 'bMotionBlur') -ne 'True')
         Grass = New-Switch ((& $g 'bShowGrass') -eq 'False')
@@ -1964,12 +2082,23 @@ function Build-fortnite {
     }
     $F = $script:Fn
     $script:FnPro = $false
+    $script:FnExtras = @{}
 
     $pro = New-Panel
     $pro.BorderBrush = B $C.Accent
     Add-PanelItem $pro (New-Row 'Pro preset' 'What most top-earning Fortnite pros run: Performance mode, fullscreen, Reflex On + Boost, FPS capped at your monitor, 3D resolution 100%, and view distance, meshes, textures, effects and post-processing on low with shadows and anti-aliasing off. Pick it, then press Apply to Fortnite.' (New-Button 'Use pro preset' -Primary { Set-FortnitePro }))
     Add-PanelItem $pro (New-Row 'Potato preset' 'For weak PCs and laptops that struggle to hold 60 FPS. Everything from the pro preset, plus 3D resolution at 50% so the game renders far fewer pixels. It looks blurrier but runs a lot faster. Pick it, then press Apply to Fortnite.' (New-Button 'Use potato preset' -Primary { Set-FortnitePotato }))
     [void]$body.Children.Add($pro)
+
+    # Pro player presets (from prosettings.net)
+    $pp = New-Panel 'Pro player presets'
+    foreach ($pl in $PRO_PLAYERS) {
+        $use = New-Button "Use $($pl.Name)'s" -Primary { param($s, $e) Set-FnState $s.Tag.State; $script:FnPro = $true; $script:FnExtras = @{ HUDScale = $s.Tag.Hud }; Set-Status "Loaded $($s.Tag.Name)'s settings. Press Apply to Fortnite to save them to the game." }
+        $use.Tag = $pl
+        Add-PanelItem $pp (New-Row $pl.Name $pl.Summary $use)
+    }
+    Add-PanelItem $pp (New-Row 'Where these come from' "Each player's video settings as listed on prosettings.net in October 2026. Players change their settings, so these may not match what they use today. Settings a site didn't list are left as you have them. Most of them play on 360 Hz monitors, so lower the FPS cap to match yours." $null)
+    [void]$body.Children.Add($pp)
 
     # My presets
     $mine = New-Panel 'My presets'
@@ -2033,6 +2162,7 @@ function Build-fortnite {
     Add-PanelItem $p1 (New-Row 'Frame rate limit' "Set it to $hzText or a little higher. Unlimited can make frame times uneven." $F.Cap.Panel)
     Add-PanelItem $p1 (New-Row '3D resolution' 'How sharp the game world is drawn. Lower is blurrier but much faster, and menus and the HUD stay sharp. 100% looks best. 66% or 50% is a big boost on weak PCs.' $F.Res3D.Panel)
     Add-PanelItem $p1 (New-Row 'Game resolution' 'A lower resolution gives more FPS on weak graphics cards, but everything looks less sharp. Most pros play at 1920 x 1080.' $F.Res.Panel)
+    Add-PanelItem $p1 (New-Row 'View distance' 'How far away buildings and objects are drawn in detail. Players are always drawn at any distance. Near is fastest, Far is what many pros use.' $F.View.Panel)
     Add-PanelItem $p1 (New-Row 'Window mode' 'Fullscreen has the lowest input delay.' $F.Win.Panel)
     Add-PanelItem $p1 (New-Row 'NVIDIA Reflex' 'Cuts input delay. Only does something on NVIDIA graphics cards.' $F.Reflex.Panel)
     [void]$body.Children.Add($p1)
@@ -2075,6 +2205,7 @@ function Set-FortnitePro {
     Set-FortniteRecommended
     Set-SegValue $script:Fn.Mode 'perf'
     Set-SegValue $script:Fn.Res3D '100'
+    Set-SegValue $script:Fn.View '0'
     $script:FnPro = $true
     Set-Status 'Pro preset picked: Performance mode, low settings, Reflex On + Boost, FPS capped at your monitor. Press Apply to Fortnite to save it.'
 }
@@ -2127,11 +2258,15 @@ function Save-FortniteSettings {
         if ($F.Shadows.IsChecked) { Set-IniValue $lines 'ScalabilityGroups' 'sg.ShadowQuality' '0' }
         if ($F.RT.IsChecked) { Set-IniValue $lines 'RayTracing' 'r.RayTracing.EnableInGame' 'False' }
         if ($script:FnPro) {
-            foreach ($k in 'sg.ViewDistanceQuality', 'sg.AntiAliasingQuality', 'sg.TextureQuality', 'sg.EffectsQuality', 'sg.PostProcessQuality', 'sg.FoliageQuality', 'sg.GlobalIlluminationQuality', 'sg.ReflectionQuality') {
+            foreach ($k in 'sg.AntiAliasingQuality', 'sg.TextureQuality', 'sg.EffectsQuality', 'sg.PostProcessQuality', 'sg.FoliageQuality', 'sg.GlobalIlluminationQuality', 'sg.ReflectionQuality') {
                 Set-IniValue $lines 'ScalabilityGroups' $k '0'
             }
             Set-IniValue $lines 'PerformanceMode' 'MeshQuality' '0'
         }
+        $vd = Get-SegValue $F.View
+        if ($null -ne $vd) { Set-IniValue $lines 'ScalabilityGroups' 'sg.ViewDistanceQuality' $vd }
+        if ($script:FnExtras -and $script:FnExtras.HUDScale) { Set-IniValue $lines $FN_SEC 'HUDScale' ('{0:0.000000}' -f [double]$script:FnExtras.HUDScale) }
+        Write-Log ("Fortnite settings written: " + ((Get-FnState).GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', ')
         Save-IniLines $lines
         Set-Status 'Saved. Your new settings load the next time you start Fortnite.' 'ok'
         $script:Built['fortnite'] = $false
@@ -2428,6 +2563,14 @@ function Build-tools {
             Set-Status 'Restore point created.' 'ok'
         } catch { Set-Status "Couldn't create a restore point: $($_.Exception.Message)" 'err' }
     }))
+    Add-PanelItem $panel (New-Row 'Free up memory' 'Makes background apps hand back RAM they are holding but not using, and clears the Windows standby cache. Helps PCs with 8 to 16 GB of RAM that stutter. On PCs with lots of RAM it will not change your FPS. Fortnite itself is left alone.' (New-Button 'Free up memory' -Primary {
+        Set-Status 'Freeing up memory...'
+        $r = Invoke-FreeMemory
+        Set-Status ("Freed {0}. {1} now available. {2}" -f (Format-Bytes $r.Freed), (Format-Bytes $r.After), $(if ($r.Purged) { 'Standby cache cleared.' } else { "Standby cache couldn't be cleared on this PC." })) 'ok'
+    }))
+    $devSw = New-Switch $script:DevMode
+    $devSw.Add_Click({ param($s, $e) Set-DevMode ([bool]$s.IsChecked); Set-Status $(if ($s.IsChecked) { 'Developer mode on. It is in the sidebar under System.' } else { 'Developer mode off.' }) 'ok' })
+    Add-PanelItem $panel (New-Row 'Developer mode' 'Shows a Developer page with a live log of everything the app does, what it found on your PC, and extra tools. Shortcut: Ctrl + Shift + D.' $devSw)
     Add-PanelItem $panel (New-Row 'Terms of use' 'The terms you agreed to the first time you opened the app.' (New-Button 'Read' { [void](Show-Terms -ReadOnly) }))
     Add-PanelItem $panel (New-Row 'Updates' "You're on version $APP_VERSION. Checks GitHub for a newer release and installs it." (New-Button 'Check for updates' { if ($upd.Latest -and (Test-NewerVersion $upd.Latest)) { Install-Update } else { Start-UpdateCheck } }))
     Add-PanelItem $panel (New-Row 'Undo all tweaks' 'Switches every tweak on the Tweaks page back off.' (New-Button 'Undo all' {
@@ -2454,6 +2597,98 @@ function Build-tools {
     Add-PanelItem $notes (New-Row 'Update your graphics driver' 'New NVIDIA and AMD drivers often add FPS in Fortnite. Get them from the NVIDIA app or AMD Software.' $null)
     [void]$body.Children.Add($notes)
 }
+
+# ---------- Developer page ----------
+function Build-dev {
+    $body = $Bodies['dev']; $body.Children.Clear()
+    Add-PageHeader $body 'Developer' 'Everything the app does is logged here. Useful when something does not work and you want to see why.'
+
+    # Live log
+    $lp = New-Panel 'Live log'
+    $script:DevLog = New-Object Windows.Controls.TextBox
+    $script:DevLog.IsReadOnly = $true
+    $script:DevLog.FontFamily = New-Object Windows.Media.FontFamily 'Cascadia Mono, Consolas'
+    $script:DevLog.FontSize = 11.5
+    $script:DevLog.Background = B '#0B0908'; $script:DevLog.Foreground = B '#D8D0C8'
+    $script:DevLog.BorderBrush = B $C.Line; $script:DevLog.Padding = T 10 8 10 8
+    $script:DevLog.Height = 260; $script:DevLog.Margin = T 18 8 18 10
+    $script:DevLog.VerticalScrollBarVisibility = 'Auto'; $script:DevLog.HorizontalScrollBarVisibility = 'Auto'
+    $script:DevLog.TextWrapping = 'NoWrap'
+    $script:DevLog.Text = ($script:LogLines -join "`r`n")
+    $script:DevLog.ScrollToEnd()
+    $script:DevLogCount = $script:LogLines.Count
+    [void]$lp.Child.Children.Add($script:DevLog)
+    $lb = New-Object Windows.Controls.StackPanel
+    $lb.Orientation = 'Horizontal'; $lb.Margin = T 18 0 18 14
+    $b1 = New-Button 'Copy log' { [Windows.Clipboard]::SetText(($script:LogLines -join "`r`n")); Set-Status 'Log copied.' 'ok' }
+    $b2 = New-Button 'Open log folder' { Start-Process explorer.exe $DATA_DIR }; $b2.Margin = T 8 0 0 0
+    $b3 = New-Button 'Clear' { $script:LogLines.Clear(); $script:DevLog.Text = ''; $script:DevLogCount = 0 }; $b3.Margin = T 8 0 0 0
+    foreach ($b in $b1, $b2, $b3) { [void]$lb.Children.Add($b) }
+    [void]$lp.Child.Children.Add($lb)
+    [void]$body.Children.Add($lp)
+
+    # Internals
+    $ip = New-Panel 'What the app sees'
+    $exe = Get-RunningExe
+    $ri = $null; try { $ri = [Vz.Native]::RefreshInfo() } catch { }
+    $nvState = if (-not $script:NvLoaded) { 'Driver code did not load' } elseif ([Vz.Nv]::Available()) { 'NVIDIA driver connected' } else { [Vz.Nv]::LastError }
+    $info = @(
+        @('App version', "$APP_VERSION  ($(if ($exe) { $exe } else { 'running as script' }))"),
+        @('PowerShell', "$($PSVersionTable.PSVersion)  on .NET $([Environment]::Version)"),
+        @('Running as admin', "$(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"),
+        @('Data folder', $DATA_DIR),
+        @('Fortnite exe', $(if ($FN_PATH) { $FN_PATH } else { 'not found' })),
+        @('Fortnite settings file', "$FN_INI  ($(if (Test-Path -LiteralPath $FN_INI) { 'found' } else { 'missing' }), backup $(if (Test-Path -LiteralPath $FN_INI_ORIG) { 'saved' } else { 'not made yet' }))"),
+        @('Display', $(if ($ri) { "$($ri[0]) x $($ri[1]) at $($ri[2]) Hz, max $($ri[3]) Hz" } else { 'unknown' })),
+        @('NVIDIA', $nvState),
+        @('Connection', $script:Conn),
+        @('Ping test', "$($sync.State), $($sync.Rounds) rounds, $(@($sync.DCs).Count) datacenters"),
+        @('Update check', "$($upd.State), latest $($upd.Latest), error $($upd.Error)")
+    )
+    foreach ($row in $info) {
+        $v = New-Text $row[1] 12 $C.Muted -Wrap
+        $v.FontFamily = New-Object Windows.Media.FontFamily 'Cascadia Mono, Consolas'
+        Add-PanelItem $ip (New-Row $row[0] $null $null $null)
+        $ip.Child.Children[$ip.Child.Children.Count - 1].Children[0].Children.Add($v) | Out-Null
+    }
+    [void]$body.Children.Add($ip)
+
+    # Tweak states with the raw check result
+    $tp = New-Panel 'Tweak states'
+    foreach ($t in $Tweaks) {
+        $st = Get-TweakState $t
+        $txt = if (-not $st.Available) { 'not available' } elseif ($st.On) { 'ON' } else { 'off' }
+        Add-PanelItem $tp (New-Row "$($t.Name)" "id: $($t.Id), group: $($t.Group)" (New-Text $txt 12.5 $(if ($st.On) { $C.Good } else { $C.Muted }) 'SemiBold'))
+    }
+    [void]$body.Children.Add($tp)
+
+    # Extra tools
+    $xp = New-Panel 'Extra tools'
+    Add-PanelItem $xp (New-Row 'Memory usage' 'Live RAM use and what Free up memory would give back.' (New-Button 'Free up memory now' -Primary {
+        $r = Invoke-FreeMemory
+        Set-Status ("Freed {0}, {1} now available." -f (Format-Bytes $r.Freed), (Format-Bytes $r.After)) 'ok'
+        Show-Page 'dev'
+    }))
+    Add-PanelItem $xp (New-Row 'Open Fortnite config folder' 'Where GameUserSettings.ini lives.' (New-Button 'Open' { Start-Process explorer.exe (Split-Path $FN_INI) }))
+    Add-PanelItem $xp (New-Row 'Restart the app' 'Closes and reopens the app, for example after changing files by hand.' (New-Button 'Restart' {
+        $exe = Get-RunningExe
+        if ($exe) { Start-Process -FilePath $exe } else { Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" }
+        $window.Close()
+    }))
+    Add-PanelItem $xp (New-Row 'Check for updates now' 'Ignores the quiet start-up check and asks GitHub again.' (New-Button 'Check' { Start-UpdateCheck }))
+    [void]$body.Children.Add($xp)
+}
+$devTimer = New-Object Windows.Threading.DispatcherTimer
+$devTimer.Interval = [TimeSpan]::FromMilliseconds(800)
+$devTimer.Add_Tick({
+    if ($script:DevLog -and $Pages['dev'].Visibility -eq 'Visible' -and $script:LogLines.Count -ne $script:DevLogCount) {
+        $script:DevLog.Text = ($script:LogLines -join "`r`n")
+        $script:DevLog.ScrollToEnd()
+        $script:DevLogCount = $script:LogLines.Count
+    }
+})
+$devTimer.Start()
+Write-Log "App started, version $APP_VERSION"
 
 # ---------- Run ----------
 $window.Add_Closed({
