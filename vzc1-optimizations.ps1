@@ -1412,7 +1412,7 @@ $TWEAK_GROUPS = @(
     @{ Id = 'perf';  Group = 'Performance';        Title = 'Performance';      Sub = 'Windows settings that keep your FPS high and steady.' }
     @{ Id = 'net';   Group = 'Network';            Title = 'Network';          Sub = 'Settings that cut lag spikes. They cannot lower your base ping, which depends on distance to the server.' }
     @{ Id = 'input'; Group = 'Mouse and keyboard'; Title = 'Mouse and keyboard'; Sub = 'Settings that make your aim and keys respond the same way every time.' }
-    @{ Id = 'lowend'; Group = 'Low-end PC'; Title = 'Low-end PC'; Sub = 'Extra savings for weak PCs and laptops. They make Windows look plainer but leave more power for Fortnite. For potato graphics in the game itself, use the Potato preset on the Game settings page.' }
+    @{ Id = 'lowend'; Group = 'Low-end PC'; Title = 'Low-end PC'; Sub = 'Extra savings for weak PCs and laptops. They make Windows look plainer but leave more power for Fortnite. For potato graphics in Fortnite itself, use the NVIDIA potato textures on the Game settings page.' }
 )
 $NAV = @(
     @{ Id = 'home';     Label = 'Dashboard';         Icon = [char]0xE80F }
