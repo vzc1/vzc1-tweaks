@@ -552,6 +552,7 @@ function Save-IniLines($lines) {
     $f = Get-Item -LiteralPath $FN_INI
     if ($f.IsReadOnly) { $f.IsReadOnly = $false }
     [IO.File]::WriteAllLines($FN_INI, [string[]]$lines.ToArray(), (New-Object System.Text.UTF8Encoding $false))
+    if ($script:LockSw -and $script:LockSw.IsChecked) { (Get-Item -LiteralPath $FN_INI).IsReadOnly = $true }
 }
 function Test-FortniteRunning { [bool](Get-Process -Name 'FortniteClient-Win64-Shipping' -ErrorAction SilentlyContinue) }
 
@@ -1110,7 +1111,7 @@ Add-Type -AssemblyName Microsoft.VisualBasic
               </Border>
               <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
                 <TextBlock Text="vzc1's optimizations" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="14" Foreground="#FFFFFF"/>
-                <TextBlock x:Name="SideSub" Text="Free and open source" FontSize="11" Foreground="#FF8A33"/>
+                <TextBlock x:Name="SideSub" Text="Free and open source" FontSize="11" Foreground="#FF8A33" Cursor="Hand" Background="Transparent"/>
               </StackPanel>
             </StackPanel>
 
@@ -1350,9 +1351,7 @@ function Set-Status($msg, $kind = 'info') {
 $window.Add_KeyDown({
     param($s, $e)
     if ($e.Key -eq 'D' -and [Windows.Input.Keyboard]::Modifiers -eq ([Windows.Input.ModifierKeys]::Control -bor [Windows.Input.ModifierKeys]::Shift)) {
-        Set-DevMode (-not $script:DevMode)
-        Set-Status $(if ($script:DevMode) { 'Developer mode on. It is in the sidebar under System.' } else { 'Developer mode off.' }) 'ok'
-        if ($script:DevMode) { Go-Page 'dev' }
+        Request-DevMode
     }
 })
 (W 'BtnMin').Add_Click({ $window.WindowState = 'Minimized' })
@@ -1453,6 +1452,65 @@ function Set-DevMode([bool]$on) {
     $NavButtons['dev'].Visibility = if ($on) { 'Visible' } else { 'Collapsed' }
 }
 $NavButtons['dev'].Visibility = if ($script:DevMode) { 'Visible' } else { 'Collapsed' }
+
+# Only a fingerprint of the code is stored here, never the code itself.
+$DEV_CODE_HASH = 'd42235100d6355829c17583d2b16e5e7a4c5f9c9abbdbbf837dfd6779cf060d1'
+function Test-DevCode($code) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $hex = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("vzc1-dev:$code")) | ForEach-Object { $_.ToString('x2') })
+    $hex -eq $DEV_CODE_HASH
+}
+function Show-CodePrompt {
+    [xml]$cx = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Enter code" Width="380" Height="250" WindowStartupLocation="CenterOwner"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent" ResizeMode="NoResize" ShowInTaskbar="False"
+        FontFamily="Segoe UI Variable Text, Segoe UI" TextOptions.TextFormattingMode="Display">
+  <Border CornerRadius="12" Background="#0E0C0B" BorderBrush="#FF7A1A" BorderThickness="1">
+    <StackPanel Margin="26,22,26,20">
+      <TextBlock Text="Enter code" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="20" Foreground="White"/>
+      <TextBlock Text="Type the code to unlock developer mode." FontSize="12.5" Foreground="#A39B94" Margin="0,4,0,14"/>
+      <PasswordBox x:Name="Code" FontSize="16" Padding="10,8" Background="#1A1512" Foreground="White" BorderBrush="#3A2F27" CaretBrush="White"/>
+      <TextBlock x:Name="Msg" Text=" " FontSize="12" Foreground="#FF5A5A" Margin="2,8,0,0"/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+        <Button x:Name="Cancel" Content="CANCEL" FontSize="12" FontWeight="Bold" Foreground="#F3EEEA" Cursor="Hand" Padding="18,8" Background="#1A1512" BorderBrush="#3A2F27"/>
+        <Button x:Name="Ok" Content="UNLOCK" FontSize="12" FontWeight="Bold" Foreground="White" Cursor="Hand" Padding="18,8" Margin="10,0,0,0" Background="#FF7A1A" BorderBrush="#FF7A1A"/>
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>
+'@
+    $cw = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $cx))
+    try { $cw.Owner = $window } catch { $cw.WindowStartupLocation = 'CenterScreen' }
+    $box = $cw.FindName('Code'); $msg = $cw.FindName('Msg')
+    $script:CodeOk = $false
+    $try = {
+        if (Test-DevCode $box.Password) { $script:CodeOk = $true; $cw.Close() }
+        else { $msg.Text = 'Wrong code.'; $box.Clear(); $box.Focus() | Out-Null; Write-Log 'Developer code: wrong code entered' 'err' }
+    }
+    $cw.FindName('Ok').Add_Click($try)
+    $cw.FindName('Cancel').Add_Click({ $cw.Close() })
+    $box.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { & $try } elseif ($e.Key -eq 'Escape') { $cw.Close() } })
+    $cw.Add_MouseLeftButtonDown({ try { $cw.DragMove() } catch { } })
+    $cw.Add_ContentRendered({ $box.Focus() | Out-Null })
+    [void]$cw.ShowDialog()
+    return $script:CodeOk
+}
+function Request-DevMode {
+    if ($script:DevMode) {
+        Set-DevMode $false
+        Set-Status 'Developer mode off.' 'ok'
+        if ($Pages['dev'].Visibility -eq 'Visible') { Go-Page 'home' }
+        return
+    }
+    if (Show-CodePrompt) {
+        Set-DevMode $true
+        Set-Status 'Developer mode unlocked. It is in the sidebar under System.' 'ok'
+        Go-Page 'dev'
+    }
+}
+(W 'SideSub').Add_MouseLeftButtonDown({ param($s, $e) $e.Handled = $true; Request-DevMode })
 
 $script:Built = @{}
 function Go-Page($id) { if ($NavButtons[$id].IsChecked) { Show-Page $id } else { $NavButtons[$id].IsChecked = $true } }
@@ -2087,8 +2145,19 @@ function Build-fortnite {
     $pro = New-Panel
     $pro.BorderBrush = B $C.Accent
     Add-PanelItem $pro (New-Row 'Pro preset' 'What most top-earning Fortnite pros run: Performance mode, fullscreen, Reflex On + Boost, FPS capped at your monitor, 3D resolution 100%, and view distance, meshes, textures, effects and post-processing on low with shadows and anti-aliasing off. Pick it, then press Apply to Fortnite.' (New-Button 'Use pro preset' -Primary { Set-FortnitePro }))
-    Add-PanelItem $pro (New-Row 'Potato preset' 'For weak PCs and laptops that struggle to hold 60 FPS. Everything from the pro preset, plus 3D resolution at 50% so the game renders far fewer pixels. It looks blurrier but runs a lot faster. Pick it, then press Apply to Fortnite.' (New-Button 'Use potato preset' -Primary { Set-FortnitePotato }))
     [void]$body.Children.Add($pro)
+
+    # Potato levels
+    $pot = New-Panel 'Potato graphics'
+    foreach ($lvl in $POTATO_LEVELS) {
+        $b = New-Button "Use $($lvl.Name)" -Primary { param($s, $e) Set-FortnitePotato $s.Tag }
+        $b.Tag = $lvl
+        Add-PanelItem $pot (New-Row $lvl.Name $lvl.Desc $b)
+    }
+    $isLocked = $false; try { $isLocked = (Get-Item -LiteralPath $FN_INI).IsReadOnly } catch { }
+    $script:LockSw = New-Switch $isLocked
+    Add-PanelItem $pot (New-Row 'Lock the settings file after applying' 'Makes the settings file read-only so Fortnite cannot undo the potato values after an update. While it is locked, changes you make in the game menu will not save. Apply again with this off to unlock it.' $script:LockSw)
+    [void]$body.Children.Add($pot)
 
     # Pro player presets (from prosettings.net)
     $pp = New-Panel 'Pro player presets'
@@ -2141,7 +2210,7 @@ function Build-fortnite {
         $undo = New-Button 'Undo' { Set-NvPotato $false }
         $undo.Margin = T 8 0 0 0
         [void]$btns.Children.Add($undo)
-        $desc = 'Sets Fortnite''s profile in your NVIDIA driver so textures load at their lowest detail and the card runs at full speed. Things look flat and blurry, but there is less to draw and enemies stand out. The same trick as NVIDIA Profile Inspector, done for you. Restart Fortnite afterwards.'
+        $desc = 'Sets Fortnite''s profile in your NVIDIA driver so textures load at their lowest detail and the card runs at full speed. Things look flat and blurry, but there is less to draw and enemies stand out. The NVIDIA Profile Inspector method from leStripeZ''s video, done for you. Restart Fortnite afterwards.'
         if (-not $script:NvLoaded -or -not $cur) { $desc += ' (Could not read your NVIDIA settings: ' + $(if ($script:NvLoaded) { [Vz.Nv]::LastError } else { 'driver code did not load' }) + ')' }
         elseif ($on) { $desc = 'On. ' + $desc }
         Add-PanelItem $nv (New-Row 'Potato textures' $desc $btns)
@@ -2195,10 +2264,18 @@ function Build-fortnite {
     [void]$body.Children.Add($bar)
 }
 
-function Set-FortnitePotato {
+$POTATO_LEVELS = @(
+    @{ Name = 'Potato Lite'; Res3D = 75; Res = $null; View = '1'
+       Desc = 'For mid-range laptops. Performance mode, everything on lowest, 3D resolution 75%, view distance Medium. Still easy to see.' }
+    @{ Name = 'Potato'; Res3D = 50; Res = $null; View = '0'
+       Desc = 'For weak PCs that struggle to hold 60 FPS. Performance mode, everything on lowest, 3D resolution 50%, view distance Near. Blurry, but a lot faster.' }
+    @{ Name = 'Ultra Potato'; Res3D = 35; Res = '1280x720'; View = '0'
+       Desc = 'Last resort for very old PCs. Performance mode, everything on lowest, 3D resolution 35%, 1280 x 720, view distance Near. It looks rough, but it is the most FPS Fortnite can give.' }
+)
+function Set-FortnitePotato($lvl) {
     Set-FortnitePro
-    Set-SegValue $script:Fn.Res3D '50'
-    Set-Status 'Potato preset picked: Performance mode, everything on lowest, 3D resolution 50%. Press Apply to Fortnite to save it.'
+    Set-FnState @{ Res3D = $lvl.Res3D; View = $lvl.View; Res = $lvl.Res }
+    Set-Status "$($lvl.Name) picked. Press Apply to Fortnite to save it. On an NVIDIA card, add the potato textures below for the flattest look."
 }
 
 function Set-FortnitePro {
@@ -2568,9 +2645,9 @@ function Build-tools {
         $r = Invoke-FreeMemory
         Set-Status ("Freed {0}. {1} now available. {2}" -f (Format-Bytes $r.Freed), (Format-Bytes $r.After), $(if ($r.Purged) { 'Standby cache cleared.' } else { "Standby cache couldn't be cleared on this PC." })) 'ok'
     }))
-    $devSw = New-Switch $script:DevMode
-    $devSw.Add_Click({ param($s, $e) Set-DevMode ([bool]$s.IsChecked); Set-Status $(if ($s.IsChecked) { 'Developer mode on. It is in the sidebar under System.' } else { 'Developer mode off.' }) 'ok' })
-    Add-PanelItem $panel (New-Row 'Developer mode' 'Shows a Developer page with a live log of everything the app does, what it found on your PC, and extra tools. Shortcut: Ctrl + Shift + D.' $devSw)
+    if ($script:DevMode) {
+        Add-PanelItem $panel (New-Row 'Developer mode' 'Developer mode is unlocked on this PC.' (New-Button 'Turn off' { Request-DevMode; Show-Page 'tools' }))
+    }
     Add-PanelItem $panel (New-Row 'Terms of use' 'The terms you agreed to the first time you opened the app.' (New-Button 'Read' { [void](Show-Terms -ReadOnly) }))
     Add-PanelItem $panel (New-Row 'Updates' "You're on version $APP_VERSION. Checks GitHub for a newer release and installs it." (New-Button 'Check for updates' { if ($upd.Latest -and (Test-NewerVersion $upd.Latest)) { Install-Update } else { Start-UpdateCheck } }))
     Add-PanelItem $panel (New-Row 'Undo all tweaks' 'Switches every tweak on the Tweaks page back off.' (New-Button 'Undo all' {
