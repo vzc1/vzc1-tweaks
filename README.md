@@ -35,7 +35,9 @@ If Windows shows "Windows protected your PC", click **More info**, then **Run an
 
 **Background apps** lists what's using your memory right now and closes it with one click.
 
-**Tools**: free up memory (trims RAM background apps aren't using and clears the standby cache), developer mode with a live activity log (locked behind a code), restore point, undo all tweaks, temp file cleanup, bufferbloat test.
+**Game Boost**: closes the background apps you pick, frees memory, puts the power plan on max and starts Fortnite. End Game Boost puts it all back.
+
+**Tools**: lowest delay button, mouse polling rate test, shader cache fix, graphics driver check, free up memory (trims RAM background apps aren't using and clears the standby cache), developer mode with a live activity log (locked behind a code), restore point, undo all tweaks, temp file cleanup, bufferbloat test.
 
 ## Honest notes
 - No app can lower your base ping. That depends on how far you are from the server. What you can fix is lag spikes, and an Ethernet cable fixes most of them.

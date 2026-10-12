@@ -250,6 +250,46 @@ namespace Vz {
     }
 }
 '@
+# Mouse polling rate: counts raw mouse reports (WM_INPUT) for a hidden window.
+$POLL_SOURCE = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+namespace Vz {
+    public class Poll : NativeWindow, IDisposable {
+        [StructLayout(LayoutKind.Sequential)]
+        struct RawInputDevice { public ushort UsagePage; public ushort Usage; public uint Flags; public IntPtr Target; }
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern bool RegisterRawInputDevices(RawInputDevice[] devices, uint count, uint size);
+
+        public long Count;
+
+        public Poll() {
+            CreateHandle(new CreateParams());
+            RawInputDevice[] d = new RawInputDevice[1];
+            d[0].UsagePage = 1; d[0].Usage = 2; d[0].Flags = 0x100; d[0].Target = Handle; // mouse, RIDEV_INPUTSINK
+            if (!RegisterRawInputDevices(d, 1, (uint)Marshal.SizeOf(typeof(RawInputDevice))))
+                throw new Exception("Windows refused raw mouse input (error " + Marshal.GetLastWin32Error() + ").");
+        }
+
+        protected override void WndProc(ref Message m) {
+            if (m.Msg == 0x00FF) Count++; // WM_INPUT
+            base.WndProc(ref m);
+        }
+
+        public void Dispose() {
+            RawInputDevice[] d = new RawInputDevice[1];
+            d[0].UsagePage = 1; d[0].Usage = 2; d[0].Flags = 0x1; d[0].Target = IntPtr.Zero; // RIDEV_REMOVE
+            RegisterRawInputDevices(d, 1, (uint)Marshal.SizeOf(typeof(RawInputDevice)));
+            DestroyHandle();
+        }
+    }
+}
+'@
+$script:PollLoaded = $false
+try { Add-Type -TypeDefinition $POLL_SOURCE -ReferencedAssemblies System.Windows.Forms -ErrorAction Stop; $script:PollLoaded = $true } catch { }
+
 $script:NvLoaded = $false
 try { Add-Type -TypeDefinition $NV_SOURCE -ErrorAction Stop; $script:NvLoaded = $true } catch { }
 
@@ -730,6 +770,173 @@ function Invoke-FreeMemory {
     @{ Freed = $freed; Trimmed = $trimmed; Purged = ($purge -eq 0); After = $after }
 }
 
+function Open-DriverUpdate {
+    $v = $script:Specs.GpuVendor
+    $nvApp = Join-Path $env:ProgramFiles 'NVIDIA Corporation\NVIDIA app\CEF\NVIDIA app.exe'
+    if ($v -eq 'NVIDIA' -and (Test-Path -LiteralPath $nvApp)) { Start-Process -FilePath $nvApp; Set-Status 'Opened the NVIDIA app. Check the Drivers tab for an update.' 'ok'; return }
+    $url = switch ($v) { 'NVIDIA' { 'https://www.nvidia.com/en-us/geforce/drivers/' } 'AMD' { 'https://www.amd.com/en/support/download/drivers.html' } 'Intel' { 'https://www.intel.com/content/www/us/en/support/detect.html' } default { 'https://www.nvidia.com/en-us/geforce/drivers/' } }
+    Start-Process $url
+    Set-Status 'Opened the driver download page.' 'ok'
+}
+
+$SHADER_DIRS = @(
+    (Join-Path $env:LOCALAPPDATA 'NVIDIA\DXCache'), (Join-Path $env:LOCALAPPDATA 'NVIDIA\GLCache'),
+    (Join-Path $env:LOCALAPPDATA 'D3DSCache'),
+    (Join-Path $env:LOCALAPPDATA 'AMD\DxCache'), (Join-Path $env:LOCALAPPDATA 'AMD\DxcCache'), (Join-Path $env:LOCALAPPDATA 'AMD\GLCache'),
+    (Join-Path $env:LOCALAPPDATA 'Intel\ShaderCache')
+)
+function Clear-ShaderCache {
+    if (Test-FortniteRunning) { Set-Status 'Close Fortnite first.' 'err'; return }
+    $bytes = 0; $files = 0
+    foreach ($d in $SHADER_DIRS) {
+        if (-not (Test-Path -LiteralPath $d)) { continue }
+        foreach ($f in Get-ChildItem -LiteralPath $d -Recurse -Force -File -ErrorAction SilentlyContinue) {
+            try { $len = $f.Length; Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $bytes += $len; $files++ } catch { }
+        }
+    }
+    Write-Log "Shader cache cleared: $files files, $(Format-Bytes $bytes)"
+    Set-Status ("Shader cache cleared ({0}). The first match will build it again, so expect a few small stutters, then it should run smoother than before." -f (Format-Bytes $bytes)) 'ok'
+}
+
+function Set-LowestDelay {
+    if (Test-FortniteRunning) { Set-Status 'Close Fortnite first.' 'err'; return }
+    $msgs = @()
+    if ($script:NvLoaded -and "$($script:Specs.Gpu)" -match 'NVIDIA') {
+        $err = [Vz.Nv]::Reset($FN_EXE_NAME, $NV_ALL_IDS)
+        if ($err) { $msgs += "NVIDIA: $err" } else { Set-NvLastMethod $null; $msgs += 'NVIDIA potato settings undone' }
+    }
+    if (-not $script:Fn) { Show-Page 'fortnite' }
+    if ($script:Fn) {
+        Set-FortnitePro
+        $script:Fn.Nanite.IsChecked = $true
+        Save-FortniteSettings
+        $msgs += 'Fortnite on Performance mode with Reflex On + Boost, everything low'
+    }
+    Write-Log ("Lowest delay: " + ($msgs -join '; '))
+    Set-Status (($msgs -join '. ') + '. Start Fortnite to play with the lowest delay.') 'ok'
+    Show-Page 'fortnite'
+}
+
+# ---------- Game Boost ----------
+$BOOST_FILE = Join-Path $DATA_DIR 'boost.json'
+$BOOST_DEFAULT = @('chrome', 'msedge', 'opera', 'firefox', 'brave', 'onedrive', 'teams', 'ms-teams', 'slack', 'adobe desktop service', 'creative cloud', 'epicwebhelper')
+$script:BoostState = $null
+function Get-BoostChoices {
+    try { $j = Get-Content -LiteralPath $BOOST_FILE -Raw -ErrorAction Stop | ConvertFrom-Json; @(foreach ($x in $j.Close) { "$x" }) } catch { $BOOST_DEFAULT }
+}
+function Save-BoostChoices($list) {
+    try {
+        if (-not (Test-Path $DATA_DIR)) { New-Item -ItemType Directory -Path $DATA_DIR -Force | Out-Null }
+        ConvertTo-Json -InputObject @{ Close = @($list) } | Set-Content -LiteralPath $BOOST_FILE -Encoding UTF8
+    } catch { }
+}
+function Show-BoostPicker {
+    $apps = @(Get-HeavyApps)
+    $chosen = Get-BoostChoices
+    [xml]$bx = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Game Boost" Width="480" Height="560" WindowStartupLocation="CenterOwner"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent" ResizeMode="NoResize" ShowInTaskbar="False"
+        FontFamily="Segoe UI Variable Text, Segoe UI" TextOptions.TextFormattingMode="Display">
+  <Border CornerRadius="12" Background="#0E0C0B" BorderBrush="#FF7A1A" BorderThickness="1">
+    <Grid Margin="26,22,26,20">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+      <StackPanel>
+        <TextBlock Text="Game Boost" FontFamily="Segoe UI Variable Display, Segoe UI" FontWeight="Bold" FontSize="22" Foreground="White"/>
+        <TextBlock TextWrapping="Wrap" FontSize="12.5" Foreground="#A39B94" Margin="0,4,0,14" Text="Ticked apps are closed while you play. Then memory is freed, the power plan goes to max performance and Fortnite starts. Press End Game Boost afterwards to put everything back."/>
+      </StackPanel>
+      <Border Grid.Row="1" Background="#15110E" BorderBrush="#2B231C" BorderThickness="1" CornerRadius="10">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14,10">
+          <StackPanel x:Name="List"/>
+        </ScrollViewer>
+      </Border>
+      <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+        <Button x:Name="Cancel" Content="CANCEL" FontSize="12" FontWeight="Bold" Foreground="#F3EEEA" Cursor="Hand" Padding="18,9" Background="#1A1512" BorderBrush="#3A2F27"/>
+        <Button x:Name="Go" Content="BOOST AND START FORTNITE" FontSize="12" FontWeight="Bold" Foreground="White" Cursor="Hand" Padding="18,9" Margin="10,0,0,0" Background="#FF7A1A" BorderBrush="#FF7A1A"/>
+      </StackPanel>
+    </Grid>
+  </Border>
+</Window>
+'@
+    $bw = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $bx))
+    try { $bw.Owner = $window } catch { $bw.WindowStartupLocation = 'CenterScreen' }
+    $list = $bw.FindName('List')
+    $boxes = @()
+    if (-not $apps.Count) {
+        $t = New-Text 'No heavy background apps are open right now.' 13 $C.Muted
+        [void]$list.Children.Add($t)
+    }
+    foreach ($a in $apps) {
+        $cb = New-Object Windows.Controls.CheckBox
+        $cb.Style = $window.FindResource('Check')
+        $cb.Margin = T 0 6 0 6
+        $cb.Tag = $a
+        $cb.IsChecked = ($chosen -contains $a.Process.ToLower())
+        $lbl = New-Text ("{0}   {1}" -f $a.Label, (Format-Bytes $a.Bytes)) 13 $C.Text
+        $cb.Content = $lbl
+        [void]$list.Children.Add($cb)
+        $boxes += $cb
+    }
+    $script:BoostPick = $null
+    $bw.FindName('Go').Add_Click({
+        $script:BoostPick = @($boxes | Where-Object { $_.IsChecked } | ForEach-Object { $_.Tag })
+        $keep = @($chosen | Where-Object { $n = $_; -not ($apps | Where-Object { $_.Process.ToLower() -eq $n }) })
+        Save-BoostChoices (@($keep) + @($script:BoostPick | ForEach-Object { $_.Process.ToLower() }) | Sort-Object -Unique)
+        $bw.Close()
+    })
+    $bw.FindName('Cancel').Add_Click({ $bw.Close() })
+    $bw.Add_MouseLeftButtonDown({ try { $bw.DragMove() } catch { } })
+    [void]$bw.ShowDialog()
+    return $script:BoostPick
+}
+function Start-GameBoost {
+    if ($script:BoostState) { Stop-GameBoost; return }
+    $pick = Show-BoostPicker
+    if ($null -eq $pick) { return }
+    $state = @{ Closed = @(); Plan = $null }
+    foreach ($a in $pick) {
+        $paths = @(Get-Process -Name $a.Process -ErrorAction SilentlyContinue | ForEach-Object { try { $_.MainModule.FileName } catch { $null } } | Where-Object { $_ } | Select-Object -Unique)
+        foreach ($p in Get-Process -Name $a.Process -ErrorAction SilentlyContinue) { try { [void]$p.CloseMainWindow() } catch { } }
+        $state.Closed += @{ Name = $a.Label; Process = $a.Process; Path = ($paths | Select-Object -First 1) }
+    }
+    if ($pick.Count) {
+        Start-Sleep -Milliseconds 1500
+        foreach ($a in $pick) { Get-Process -Name $a.Process -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }
+    }
+    try {
+        $active = (powercfg /getactivescheme | Out-String)
+        if ($active -match $GUID_RE) { $state.Plan = $Matches[0] }
+        $pt = $Tweaks | Where-Object { $_.Id -eq 'power' }
+        if (-not (Get-TweakState $pt).On) { & $pt.On } else { $state.Plan = $null }
+    } catch { }
+    $mem = Invoke-FreeMemory
+    $script:BoostState = $state
+    (W 'SideBoost').Content = 'END GAME BOOST'
+    Write-Log ("Game Boost on: closed {0}; freed {1}; power plan saved {2}" -f (($state.Closed | ForEach-Object { $_.Name }) -join ', '), (Format-Bytes $mem.Freed), $state.Plan)
+    Start-Fortnite
+    Set-Status ("Game Boost on. Closed {0} app{1}, freed {2}, power plan on max. Press End Game Boost when you are done." -f $state.Closed.Count, $(if ($state.Closed.Count -ne 1) { 's' }), (Format-Bytes $mem.Freed)) 'ok'
+}
+function Stop-GameBoost {
+    $state = $script:BoostState
+    if (-not $state) { return }
+    if ($state.Plan) { powercfg /setactive $state.Plan | Out-Null }
+    $reopened = 0
+    foreach ($closedApp in $state.Closed) {
+        if ($closedApp.Path -and (Test-Path -LiteralPath $closedApp.Path) -and -not (Get-Process -Name $closedApp.Process -ErrorAction SilentlyContinue)) {
+            try { Start-Process -FilePath $closedApp.Path; $reopened++ } catch { }
+        }
+    }
+    $script:BoostState = $null
+    (W 'SideBoost').Content = 'GAME BOOST'
+    Write-Log "Game Boost off: power plan restored, reopened $reopened apps"
+    Set-Status "Game Boost off. Power plan put back and $reopened app$(if ($reopened -ne 1) { 's' }) reopened." 'ok'
+}
+
 function Format-Bytes($b) { if ($b -ge 1GB) { '{0:0.0} GB' -f ($b / 1GB) } else { '{0:0} MB' -f ($b / 1MB) } }
 # ---------- Fortnite server map ----------
 # Each matchmaking region has an official Epic ping host. Each host resolves to
@@ -1189,7 +1396,8 @@ Add-Type -AssemblyName Microsoft.VisualBasic
                   <Button x:Name="SideAll" Style="{StaticResource Primary}" Content="TURN ON ALL" Padding="10,8"/>
                 </StackPanel>
               </Border>
-              <Button x:Name="SideStart" Style="{StaticResource Primary}" Content="START FORTNITE" Padding="10,9" Margin="0,0,0,8"/>
+              <Button x:Name="SideBoost" Style="{StaticResource Primary}" Content="GAME BOOST" Padding="10,9" Margin="0,0,0,8"/>
+              <Button x:Name="SideStart" Style="{StaticResource Btn}" Content="START FORTNITE" Padding="10,8" Margin="0,0,0,8"/>
               <Button x:Name="SideUpdate" Style="{StaticResource Btn}" Content="CHECK FOR UPDATES" Padding="10,8" Margin="0,0,0,8"/>
               <Button x:Name="SideExit" Style="{StaticResource Btn}" Content="EXIT" Padding="10,8"/>
             </StackPanel>
@@ -1421,6 +1629,7 @@ $window.Add_KeyDown({
 (W 'BtnClose').Add_Click({ $window.Close() })
 (W 'SideExit').Add_Click({ $window.Close() })
 (W 'SideStart').Add_Click({ Start-Fortnite })
+(W 'SideBoost').Add_Click({ Start-GameBoost })
 (W 'SideSub').Text = "Version $APP_VERSION"
 
 function Get-ConnectionType {
@@ -1601,8 +1810,22 @@ function Get-Specs {
         $s.CpuSub = "$($cpu.NumberOfCores) cores, $($cpu.NumberOfLogicalProcessors) threads"
     } catch { $s.Cpu = 'Unknown' }
     try {
-        $gpus = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -notmatch 'Basic|Virtual|Remote|Parsec|Meta' } | ForEach-Object { $_.Name.Trim() })
+        $vcs = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -notmatch 'Basic|Virtual|Remote|Parsec|Meta' })
+        $gpus = @($vcs | ForEach-Object { $_.Name.Trim() })
         $s.Gpu = if ($gpus.Count) { $gpus -join "`n" } else { 'Unknown' }
+        $main = $vcs | Where-Object { $_.Name -match 'NVIDIA|AMD|Radeon' } | Select-Object -First 1
+        if (-not $main) { $main = $vcs | Select-Object -First 1 }
+        if ($main) {
+            $s.GpuVendor = if ($main.Name -match 'NVIDIA') { 'NVIDIA' } elseif ($main.Name -match 'AMD|Radeon') { 'AMD' } elseif ($main.Name -match 'Intel') { 'Intel' } else { '' }
+            $s.DriverRaw = "$($main.DriverVersion)"
+            $s.DriverDate = $main.DriverDate
+            # NVIDIA shows e.g. 32.0.15.6094 as driver 560.94
+            $s.Driver = $s.DriverRaw
+            if ($s.GpuVendor -eq 'NVIDIA') {
+                $digits = ($s.DriverRaw -replace '\.', '')
+                if ($digits.Length -ge 5) { $last = $digits.Substring($digits.Length - 5); $s.Driver = "$($last.Substring(0, 3)).$($last.Substring(3))" }
+            }
+        }
     } catch { $s.Gpu = 'Unknown' }
     try {
         $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
@@ -1692,6 +1915,8 @@ function Build-TweakPage($id) {
     $script:CurrentTweakPage = $id
     [void]$right.Children.Add($allBtn)
     Add-PageHeader $body $grp.Title $grp.Sub $right
+
+    if ($id -eq 'input') { Add-PollPanel $body }
 
     $panel = New-Panel "$($grp.Title) tweaks"
     foreach ($t in $list) {
@@ -1832,6 +2057,72 @@ $updTimer.Start()
 $runningExe = Get-RunningExe
 if ($runningExe -and (Test-Path -LiteralPath "$runningExe.old")) { Remove-Item -LiteralPath "$runningExe.old" -Force -ErrorAction SilentlyContinue }
 
+# ---------- Mouse polling rate test ----------
+$script:Poller = $null
+$pollTimer = New-Object Windows.Threading.DispatcherTimer
+$pollTimer.Interval = [TimeSpan]::FromMilliseconds(250)
+function Add-PollPanel($body) {
+    $pp = New-Panel 'Polling rate test'
+    $g = New-Object Windows.Controls.Grid
+    $g.Margin = T 18 8 18 16
+    $c1 = New-Object Windows.Controls.ColumnDefinition; $c1.Width = New-Object Windows.GridLength 1, ([Windows.GridUnitType]::Star)
+    $c2 = New-Object Windows.Controls.ColumnDefinition; $c2.Width = [Windows.GridLength]::Auto
+    $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2)
+    $left = New-Object Windows.Controls.StackPanel
+    [void]$left.Children.Add((New-Text 'How often your mouse reports to the PC' 14 $C.Text 'SemiBold'))
+    $script:PollHint = New-Text 'Press Start, then move your mouse in fast circles for a few seconds. Most gaming mice should show 1000 Hz or more.' 12.5 $C.Muted -Wrap
+    $script:PollHint.Margin = T 0 3 0 10; $script:PollHint.MaxWidth = 560; $script:PollHint.HorizontalAlignment = 'Left'
+    [void]$left.Children.Add($script:PollHint)
+    $script:PollBtn = New-Button 'Start test' -Primary { Start-PollTest }
+    $script:PollBtn.HorizontalAlignment = 'Left'
+    [void]$left.Children.Add($script:PollBtn)
+    [void]$g.Children.Add($left)
+    $right = New-Object Windows.Controls.StackPanel
+    $right.VerticalAlignment = 'Center'; $right.Margin = T 20 0 0 0
+    $script:PollNow = New-Text '--' 40 '#FFFFFF' 'Bold' -Head
+    $script:PollNow.HorizontalAlignment = 'Right'
+    $pl = New-Text 'HZ RIGHT NOW' 10 $C.Dim 'Bold'; $pl.HorizontalAlignment = 'Right'
+    $script:PollPeak = New-Text 'Peak --' 13 $C.AccentSoft 'SemiBold'; $script:PollPeak.HorizontalAlignment = 'Right'; $script:PollPeak.Margin = T 0 6 0 0
+    foreach ($el in $script:PollNow, $pl, $script:PollPeak) { [void]$right.Children.Add($el) }
+    [Windows.Controls.Grid]::SetColumn($right, 1)
+    [void]$g.Children.Add($right)
+    [void]$pp.Child.Children.Add($g)
+    [void]$body.Children.Add($pp)
+}
+function Start-PollTest {
+    if (-not $script:PollLoaded) { Set-Status "The polling test couldn't load on this PC." 'err'; return }
+    if ($script:Poller) { Stop-PollTest; return }
+    try { $script:Poller = New-Object Vz.Poll } catch { Set-Status $_.Exception.Message 'err'; return }
+    $script:PollLast = 0; $script:PollPeakHz = 0; $script:PollStart = Get-Date; $script:PollT = Get-Date
+    $script:PollBtn.Content = 'STOP'
+    $script:PollHint.Text = 'Move your mouse in fast circles now...'
+    $pollTimer.Start()
+}
+function Stop-PollTest {
+    $pollTimer.Stop()
+    if ($script:Poller) { try { $script:Poller.Dispose() } catch { }; $script:Poller = $null }
+    if ($script:PollBtn) { $script:PollBtn.Content = 'START TEST' }
+    $peak = $script:PollPeakHz
+    $std = @(125, 250, 500, 1000, 2000, 4000, 8000) | Sort-Object { [math]::Abs($_ - $peak) } | Select-Object -First 1
+    if ($peak -lt 50) { $script:PollHint.Text = 'No movement picked up. Press Start and move the mouse the whole time.' }
+    elseif ($std -lt 1000) { $script:PollHint.Text = "Your mouse is reporting about $std Hz. Gaming mice can do 1000 Hz or more. Open your mouse software (like Logitech G HUB or Razer Synapse) and set the report rate to 1000 Hz." }
+    else { $script:PollHint.Text = "Your mouse is reporting about $std Hz. That is a good polling rate." }
+    if ($peak -ge 50) { Write-Log "Polling test: peak $peak Hz, about $std Hz" }
+}
+$pollTimer.Add_Tick({
+    if (-not $script:Poller) { return }
+    $now = Get-Date
+    $dt = ($now - $script:PollT).TotalSeconds
+    $cnt = $script:Poller.Count
+    if ($dt -gt 0) {
+        $hz = [int](($cnt - $script:PollLast) / $dt)
+        $script:PollNow.Text = "$hz"
+        if ($hz -gt $script:PollPeakHz) { $script:PollPeakHz = $hz; $script:PollPeak.Text = "Peak $hz Hz" }
+    }
+    $script:PollLast = $cnt; $script:PollT = $now
+    if (($now - $script:PollStart).TotalSeconds -gt 8) { Stop-PollTest }
+})
+
 # ---------- Live CPU and memory ----------
 try { [void][Vz.Native]::CpuPercent() } catch { }
 $script:CompInfo = New-Object Microsoft.VisualBasic.Devices.ComputerInfo
@@ -1933,6 +2224,16 @@ function Get-Checks {
         default { $checks += @{ State = 'bad'; Title = 'No internet connection found'; Detail = 'Check your cable or Wi-Fi.' } }
     }
 
+    if ($script:Specs.DriverDate) {
+        $age = [int]((Get-Date) - [datetime]$script:Specs.DriverDate).TotalDays
+        if ($age -gt 120) {
+            $checks += @{ State = 'warn'; Title = "Your graphics driver is $([math]::Round($age / 30)) months old"; Detail = "Driver $($script:Specs.Driver). New drivers often fix stutters and add FPS in Fortnite."
+                Action = 'Get update'; Do = { Open-DriverUpdate }; NoRefresh = $true }
+        } else {
+            $checks += @{ State = 'good'; Title = 'Graphics driver is up to date'; Detail = "Driver $($script:Specs.Driver), from $(([datetime]$script:Specs.DriverDate).ToString('MMMM yyyy'))." }
+        }
+    }
+
     $apps = @(Get-HeavyApps)
     $sum = ($apps | Measure-Object Bytes -Sum).Sum
     if ($sum -gt 1.5GB) {
@@ -1969,7 +2270,7 @@ function Build-home {
     $good = @($checks | Where-Object { $_.State -eq 'good' }).Count
     $left = $checks.Count - $good
     $sub = if ($left -eq 0) { "Everything checks out. Go play." } elseif ($left -eq 1) { '1 thing to fix before you play.' } else { "$left things to fix before you play." }
-    Add-PageHeader $body 'Dashboard' $sub (New-Button 'Start Fortnite' -Primary { Start-Fortnite })
+    Add-PageHeader $body 'Dashboard' $sub (New-Button $(if ($script:BoostState) { 'End Game Boost' } else { 'Game Boost' }) -Primary { Start-GameBoost; Show-Page 'home' })
 
     # Live monitor
     $live = New-Panel 'Live system'
@@ -2042,7 +2343,7 @@ function Build-home {
     try { $ri = [Vz.Native]::RefreshInfo(); if ($ri) { $disp = "$($ri[0]) x $($ri[1]) at $($ri[2]) Hz"; $dispSub = "Supports up to $($ri[3]) Hz" } } catch { }
     $cards = @(
         @('Operating system', $sp.Os, $sp.OsSub), @('Processor', $sp.Cpu, $sp.CpuSub),
-        @('Graphics', $sp.Gpu, 'Primary display adapter'), @('Memory', $sp.Ram, $sp.RamSub),
+        @('Graphics', $sp.Gpu, $(if ($sp.Driver) { "Driver $($sp.Driver)$(if ($sp.DriverDate) { ', from ' + ([datetime]$sp.DriverDate).ToString('MMM yyyy') })" } else { 'Primary display adapter' })), @('Memory', $sp.Ram, $sp.RamSub),
         @('Display', $disp, $dispSub), @('Fortnite', $(if ($FN_PATH) { 'Installed' } else { 'Not found' }), $(if (Test-FortniteRunning) { 'Running right now' } else { 'Not running' }))
     )
     $ug = New-Object Windows.Controls.Primitives.UniformGrid
@@ -2243,6 +2544,10 @@ function Build-fortnite {
     Add-PanelItem $pro (New-Row 'Pro preset' 'What most top-earning Fortnite pros run: Performance mode, fullscreen, Reflex On + Boost, FPS capped at your monitor, 3D resolution 100%, and view distance, meshes, textures, effects and post-processing on low with shadows and anti-aliasing off. Pick it, then press Apply to Fortnite.' (New-Button 'Use pro preset' -Primary { Set-FortnitePro }))
     [void]$body.Children.Add($pro)
 
+
+    $ld = New-Panel 'Lowest delay'
+    Add-PanelItem $ld (New-Row 'Lowest delay' 'One click back to the setup with the least input delay: undoes any NVIDIA potato settings and puts Fortnite on Performance mode with Reflex On + Boost and everything low. Use it when you want the fastest feel over the potato look.' (New-Button 'Use lowest delay' -Primary { Set-LowestDelay }))
+    [void]$body.Children.Add($ld)
 
     # Pro player presets (from prosettings.net)
     $pp = New-Panel 'Pro player presets'
@@ -2710,6 +3015,8 @@ function Build-tools {
             Set-Status 'Restore point created.' 'ok'
         } catch { Set-Status "Couldn't create a restore point: $($_.Exception.Message)" 'err' }
     }))
+    Add-PanelItem $panel (New-Row 'Fix shader stutter' 'Clears the graphics card shader cache. Do this after a big Fortnite update or a new graphics driver, when the game stutters more than it used to. The first match after builds it again with a few small stutters, then it runs smoother.' (New-Button 'Clear shader cache' { Clear-ShaderCache }))
+    Add-PanelItem $panel (New-Row 'Graphics driver' $(if ($script:Specs.Driver) { "You are on driver $($script:Specs.Driver)$(if ($script:Specs.DriverDate) { ', from ' + ([datetime]$script:Specs.DriverDate).ToString('MMMM yyyy') })." } else { 'Driver version unknown.' }) (New-Button 'Check for driver update' { Open-DriverUpdate }))
     Add-PanelItem $panel (New-Row 'Free up memory' 'Makes background apps hand back RAM they are holding but not using, and clears the Windows standby cache. Helps PCs with 8 to 16 GB of RAM that stutter. On PCs with lots of RAM it will not change your FPS. Fortnite itself is left alone.' (New-Button 'Free up memory' -Primary {
         Set-Status 'Freeing up memory...'
         $r = Invoke-FreeMemory
@@ -2839,6 +3146,8 @@ Write-Log "App started, version $APP_VERSION"
 
 # ---------- Run ----------
 $window.Add_Closed({
+    try { Stop-PollTest } catch { }
+    if ($script:BoostState) { try { Stop-GameBoost } catch { } }
     $sync.Stop = $true
     $timer.Stop()
     if ($script:Runspace) { try { $script:Runspace.PS.Stop(); $script:Runspace.RS.Close() } catch { } }

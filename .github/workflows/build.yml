@@ -30,6 +30,9 @@ jobs:
           Write-Host "NVIDIA code compiled. Driver on this machine: $([Vz.Nv]::Available()) ($([Vz.Nv]::LastError))"
           Write-Host "NVIDIA read without a driver returns: $([Vz.Nv]::Read('FortniteClient-Win64-Shipping.exe', [uint32[]]@(0x00738E8F)))"
           $trimOk = 0; foreach ($p in Get-Process) { try { if ([Vz.Mem]::Trim($p.Handle)) { $trimOk++ } } catch { } }
+          $pm = [regex]::Match($src, "\`$POLL_SOURCE = @'\r?\n(.*?)\r?\n'@", 'Singleline')
+          Add-Type -TypeDefinition $pm.Groups[1].Value -ReferencedAssemblies System.Windows.Forms
+          $poll = New-Object Vz.Poll; Write-Host "Polling counter created (count $($poll.Count))"; $poll.Dispose()
           Write-Host "Memory tools: trimmed $trimOk processes, standby purge result $([Vz.Mem]::PurgeStandby()) (0 = success)"
 
           Write-Host "CPU now: $([Vz.Native]::CpuPercent())%"
