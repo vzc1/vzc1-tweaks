@@ -264,6 +264,7 @@ $NV_METHODS = @(
         @{ Id = 0x0019BB68; Name = 'Negative LOD bias'; Value = 0x01; Text = 'Clamp' }
         @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = [int]0xFFFFFFF6; Text = 'High quality' }
         @{ Id = 0x10D48A85; Name = 'Transparency supersampling'; Value = 0x38; Text = '8x Sparse Grid Supersampling' }
+        @{ Id = 0x00638E8F; Name = 'LOD bias auto-adjust'; Value = 0x00; Text = 'Off, so the driver keeps the LOD bias above' }
        ) }
     @{ Key = 'kxng'; Name = 'Kxng method'
        Desc = "From Kxng's potato graphics video. Flat textures through the driver, with Fortnite on DirectX 12, Nanite on so floors stay visible, and every other graphics setting on lowest. Kxng warns that enemies can blend into the pixelated builds."
@@ -282,6 +283,7 @@ $NV_METHODS = @(
         @{ Id = 0x20403F79; Name = 'Texture LOD bias (OpenGL)'; Value = 0x30; Text = '+3' }
         @{ Id = 0x0019BB68; Name = 'Negative LOD bias'; Value = 0x01; Text = 'Clamp' }
         @{ Id = 0x10D48A85; Name = 'Transparency supersampling'; Value = 0x34; Text = '8x Supersampling' }
+        @{ Id = 0x00638E8F; Name = 'LOD bias auto-adjust'; Value = 0x00; Text = 'Off, so the driver keeps the LOD bias above' }
         @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = 0x14; Text = 'High performance' }
         @{ Id = 0x1057EB71; Name = 'Power management mode'; Value = 0x01; Text = 'Prefer maximum performance' }
        ) }
@@ -701,7 +703,8 @@ function Invoke-FreeMemory {
     try { $purge = [Vz.Mem]::PurgeStandby() } catch { }
     Start-Sleep -Milliseconds 400
     $after = [double](New-Object Microsoft.VisualBasic.Devices.ComputerInfo).AvailablePhysicalMemory
-    $freed = [math]::Max(0, $after - $before)
+    $freed = [double]($after - $before)
+    if ($freed -lt 0) { $freed = 0 }
     Write-Log ("Free memory: trimmed {0} processes ({1} skipped/denied), standby purge result {2}, available {3:0.00} GB -> {4:0.00} GB" -f $trimmed, $failed, $purge, ($before / 1GB), ($after / 1GB))
     @{ Freed = $freed; Trimmed = $trimmed; Purged = ($purge -eq 0); After = $after }
 }
@@ -2116,6 +2119,11 @@ function Set-NvPotato($method) {
         $err = [Vz.Nv]::Reset($FN_EXE_NAME, $NV_ALL_IDS)
         if (-not $err) { $err = [Vz.Nv]::Apply($FN_EXE_NAME, $ids, $vals) }
         Write-Log "NVIDIA $($method.Key): $(if ($err) { $err } else { 'applied' })" $(if ($err) { 'err' } else { 'ok' })
+        try {
+            $back = [Vz.Nv]::Read($FN_EXE_NAME, $ids)
+            if ($back) { Write-Log ("NVIDIA read back: " + ((0..($ids.Count - 1)) | ForEach-Object { '0x{0:X8}=0x{1:X8} (wanted 0x{2:X8})' -f $ids[$_], (ConvertTo-U32 $back[$_]), $vals[$_] }) -join ', ') }
+            else { Write-Log "NVIDIA read back failed: $([Vz.Nv]::LastError)" 'err' }
+        } catch { Write-Log "NVIDIA read back error: $($_.Exception.Message)" 'err' }
         if ($err) { Set-Status "NVIDIA: $err" 'err'; Show-Page 'fortnite'; return }
         $msg = "$($method.Name) set in your NVIDIA driver."
         if ($method.Game -and $script:Fn) {
