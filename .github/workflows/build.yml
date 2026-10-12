@@ -34,6 +34,25 @@ jobs:
           foreach ($k in 'Switch','Check','Btn','Primary','Seg','Nav','ChromeBtn') { [void]$win.FindResource($k) }
           Write-Host 'Window layout OK'
 
+      - name: Test every tweak on a throwaway Windows machine
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $src = Get-Content vzc1-optimizations.ps1 -Raw
+          $code = $src.Substring(0, $src.IndexOf('# ---------- Fortnite settings file ----------'))
+          Invoke-Expression $code
+          $rows = @('| Tweak | On works | Off works |', '|---|---|---|')
+          foreach ($t in $Tweaks) {
+            $avail = $true; if ($t.Available) { $avail = [bool](& $t.Available) }
+            if (-not $avail) { $rows += "| $($t.Name) | not available here | |"; continue }
+            $onOk = $false; $offOk = $false; $err = ''
+            try { & $t.On; $onOk = [bool](& $t.Get) } catch { $err = $_.Exception.Message }
+            try { & $t.Off; $offOk = -not [bool](& $t.Get) } catch { if (-not $err) { $err = $_.Exception.Message } }
+            $rows += "| $($t.Name) | $(if ($onOk) { 'yes' } else { 'NO ' + $err }) | $(if ($offOk) { 'yes' } else { 'NO' }) |"
+          }
+          $rows -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          $rows | ForEach-Object { Write-Host $_ }
+
       - name: Build vzc1-optimizations.exe
         shell: powershell
         run: |

@@ -99,6 +99,7 @@ $IFEO          = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File 
 $FN_INI        = Join-Path $env:LOCALAPPDATA 'FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini'
 $FN_INI_ORIG   = Join-Path $env:LOCALAPPDATA 'FortniteGame\Saved\Config\WindowsClient\GameUserSettings.vzc1-original.ini'
 $DATA_DIR      = Join-Path $env:LOCALAPPDATA 'vzc1-optimizations'
+$MM_KEY        = 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile'
 
 function Find-FortniteExe {
     $dir = "$env:ProgramData\Epic\EpicGamesLauncher\Data\Manifests"
@@ -245,14 +246,17 @@ $Tweaks = @(
         Id = 'throttle'; Group = 'Network'
         Name = 'Network throttling off'
         Desc = 'Removes the limit Windows puts on network traffic while audio is playing. Small effect.'
-        Get  = { (Get-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex') -eq -1 }
+        Get  = {
+            $v = [Microsoft.Win32.Registry]::GetValue($MM_KEY, 'NetworkThrottlingIndex', $null)
+            $null -ne $v -and (([int64]$v -band [int64]4294967295) -eq [int64]4294967295)
+        }
         On   = {
-            Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex' -1
-            Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'SystemResponsiveness' 10
+            [Microsoft.Win32.Registry]::SetValue($MM_KEY, 'NetworkThrottlingIndex', [int]-1, [Microsoft.Win32.RegistryValueKind]::DWord)
+            [Microsoft.Win32.Registry]::SetValue($MM_KEY, 'SystemResponsiveness', [int]10, [Microsoft.Win32.RegistryValueKind]::DWord)
         }
         Off  = {
-            Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'NetworkThrottlingIndex' 10
-            Set-Reg 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile' 'SystemResponsiveness' 20
+            [Microsoft.Win32.Registry]::SetValue($MM_KEY, 'NetworkThrottlingIndex', [int]10, [Microsoft.Win32.RegistryValueKind]::DWord)
+            [Microsoft.Win32.Registry]::SetValue($MM_KEY, 'SystemResponsiveness', [int]20, [Microsoft.Win32.RegistryValueKind]::DWord)
         }
     }
     [pscustomobject]@{
@@ -1293,13 +1297,21 @@ function Build-TweakPage($id) {
             param($s, $e)
             $t = $s.Tag
             $want = [bool]$s.IsChecked
+            $failed = $false
             try {
                 if ($want) { & $t.On } else { & $t.Off }
-                $msg = "$($t.Name) " + $(if ($want) { 'on.' } else { 'off.' })
-                if ($t.Reboot) { $msg += ' Restart your PC for it to take effect.' }
-                Set-Status $msg 'ok'
-            } catch { Set-Status "$($t.Name) didn't change: $($_.Exception.Message)" 'err' }
-            try { $s.IsChecked = [bool](& $t.Get) } catch { }
+            } catch { Set-Status "$($t.Name) didn't change: $($_.Exception.Message)" 'err'; $failed = $true }
+            $now = $false; try { $now = [bool](& $t.Get) } catch { }
+            $s.IsChecked = $now
+            if (-not $failed) {
+                if ($now -eq $want) {
+                    $msg = "$($t.Name) " + $(if ($want) { 'on.' } else { 'off.' })
+                    if ($t.Reboot) { $msg += ' Restart your PC for it to take effect.' }
+                    Set-Status $msg 'ok'
+                } else {
+                    Set-Status "$($t.Name): Windows didn't keep the change. Something on this PC (a policy, antivirus or another tweak tool) may be resetting it." 'err'
+                }
+            }
             Update-TweakSummary
         })
         $desc = $t.Desc
