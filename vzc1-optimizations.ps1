@@ -263,6 +263,15 @@ $NV_METHODS = @(
         @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = [int]0xFFFFFFF6; Text = 'High quality' }
         @{ Id = 0x10D48A85; Name = 'Transparency supersampling'; Value = 0x38; Text = '8x Sparse Grid Supersampling' }
        ) }
+    @{ Key = 'kxng'; Name = 'Kxng method'
+       Desc = "From Kxng's potato graphics video. Flat textures through the driver, with Fortnite on DirectX 12, Nanite on so floors stay visible, and every other graphics setting on lowest. Kxng warns that enemies can blend into the pixelated builds."
+       Game = @{ Mode = 'dx12'; Nanite = $true; Lowest = $true }
+       Settings = @(
+        @{ Id = 0x00738E8F; Name = 'Texture LOD bias (DirectX)'; Value = 0x45; Text = '0x45, flat potato textures' }
+        @{ Id = 0x20403F79; Name = 'Texture LOD bias (OpenGL)'; Value = 0x45; Text = '0x45' }
+        @{ Id = 0x0019BB68; Name = 'Negative LOD bias'; Value = 0x01; Text = 'Clamp' }
+        @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = [int]0xFFFFFFF6; Text = 'High quality' }
+       ) }
     @{ Key = 'classic'; Name = 'Classic +3'
        Desc = "The older Profile Inspector method from leStripeZ's video. Textures at +3 LOD bias, high performance filtering and full GPU power. Keeps your rendering mode as it is."
        Game = $null
@@ -2097,6 +2106,7 @@ function Set-NvPotato($method) {
         if ($err) { Set-Status "NVIDIA: $err" 'err'; Show-Page 'fortnite'; return }
         $msg = "$($method.Name) set in your NVIDIA driver."
         if ($method.Game -and $script:Fn) {
+            if ($method.Game.Lowest) { Set-FortnitePro }
             if ($method.Game.Mode) { Set-SegValue $script:Fn.Mode $method.Game.Mode }
             if ($method.Game.Nanite) { $script:Fn.Nanite.IsChecked = $false }
             if (Test-FortniteRunning) { $msg += ' Close Fortnite, then press Apply to Fortnite so it switches to DirectX 12 with Nanite on.' }
@@ -2247,7 +2257,7 @@ function Build-fortnite {
             $btn.Tag = $m
             $title = if ($active) { "$($m.Name) (on)" } else { $m.Name }
             $lines = @($m.Settings | ForEach-Object { "$($_.Name): $($_.Text)" })
-            if ($m.Game) { $lines = @('Fortnite: DirectX 12, Nanite on') + $lines }
+            if ($m.Game) { $lines = @("Fortnite: DirectX 12, Nanite on$(if ($m.Game.Lowest) { ', everything else lowest' })") + $lines }
             Add-PanelItem $nv (New-Row $title ($m.Desc + "`n" + ($lines -join "`n")) $btn)
         }
         Add-PanelItem $nv (New-Row 'Other NVIDIA settings' 'Shader cache size: Unlimited. Threaded optimization: On. Vertical sync: Off. Low latency mode: Off (use Reflex in Fortnite instead).' (New-Button 'Open NVIDIA Control Panel' { Open-NvidiaPanel }))
