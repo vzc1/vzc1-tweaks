@@ -25,6 +25,11 @@ jobs:
           $m = [regex]::Match($src, "-MemberDefinition @'\r?\n(.*?)\r?\n'@", 'Singleline')
           Add-Type -Namespace Vz -Name Native -MemberDefinition $m.Groups[1].Value
           [void][Vz.Native]::CpuPercent(); Start-Sleep -Milliseconds 300
+          $nvm = [regex]::Match($src, "\`$NV_SOURCE = @'\r?\n(.*?)\r?\n'@", 'Singleline')
+          Add-Type -TypeDefinition $nvm.Groups[1].Value
+          Write-Host "NVIDIA code compiled. Driver on this machine: $([Vz.Nv]::Available()) ($([Vz.Nv]::LastError))"
+          Write-Host "NVIDIA read without a driver returns: $([Vz.Nv]::Read('FortniteClient-Win64-Shipping.exe', [uint32[]]@(0x00738E8F)))"
+
           Write-Host "CPU now: $([Vz.Native]::CpuPercent())%"
           # Window layout loads in WPF
           Add-Type -AssemblyName PresentationFramework

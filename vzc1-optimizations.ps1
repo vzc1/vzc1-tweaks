@@ -72,6 +72,160 @@ public static int SetRefresh(int hz) {
 }
 '@
 
+
+# ---------- NVIDIA driver settings ----------
+# Talks to the NVIDIA driver (nvapi64.dll) the same way NVIDIA Profile Inspector does.
+# Driver function IDs, structure layouts and setting IDs come from NVIDIA Profile Inspector
+# (https://github.com/Orbmu2k/nvidiaProfileInspector, MIT license, Copyright (c) 2016 Orbmu2k).
+$NV_SOURCE = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace Vz {
+    public static class Nv {
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi)] static extern IntPtr LoadLibrary(string name);
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi)] static extern IntPtr GetProcAddress(IntPtr lib, string name);
+
+        [StructLayout(LayoutKind.Sequential, Pack = 8, CharSet = CharSet.Unicode)]
+        public struct Setting {
+            public uint version;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 2048)] public string settingName;
+            public uint settingId;
+            public int settingType;
+            public int settingLocation;
+            public uint isCurrentPredefined;
+            public uint isPredefinedValid;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4100)] public byte[] predefinedValue;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4100)] public byte[] currentValue;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 8, CharSet = CharSet.Unicode)]
+        public struct App {
+            public uint version;
+            public uint isPredefined;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 2048)] public string appName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 2048)] public string userFriendlyName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 2048)] public string launcher;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 2048)] public string fileInFolder;
+            public uint bits;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 2048)] public string commandLine;
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate IntPtr QueryInterface(uint id);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int FInit();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int FCreate(ref IntPtr session);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int FSession(IntPtr session);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int FFindApp(IntPtr session, [MarshalAs(UnmanagedType.LPWStr)] StringBuilder appName, ref IntPtr profile, ref App app);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int FSet(IntPtr session, IntPtr profile, ref Setting setting, uint x, uint y);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int FGet(IntPtr session, IntPtr profile, uint id, ref Setting setting, ref uint x);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int FDel(IntPtr session, IntPtr profile, uint id);
+
+        static QueryInterface qi;
+        static bool ready;
+        static string lastError = "";
+        public static string LastError { get { return lastError; } }
+
+        static T Fn<T>(uint id, uint fallback) where T : class {
+            IntPtr p = qi(id);
+            if (p == IntPtr.Zero && fallback != 0) p = qi(fallback);
+            if (p == IntPtr.Zero) throw new Exception("This NVIDIA driver is missing a function the app needs. Update your driver.");
+            return Marshal.GetDelegateForFunctionPointer(p, typeof(T)) as T;
+        }
+
+        static bool Init() {
+            if (ready) return true;
+            IntPtr lib = LoadLibrary(IntPtr.Size == 8 ? "nvapi64.dll" : "nvapi.dll");
+            if (lib == IntPtr.Zero) { lastError = "No NVIDIA driver found on this PC."; return false; }
+            IntPtr q = GetProcAddress(lib, "nvapi_QueryInterface");
+            if (q == IntPtr.Zero) { lastError = "The NVIDIA driver interface wasn't found."; return false; }
+            qi = (QueryInterface)Marshal.GetDelegateForFunctionPointer(q, typeof(QueryInterface));
+            int r = Fn<FInit>(0x0150E828, 0)();
+            if (r != 0) { lastError = "The NVIDIA driver didn't respond (code " + r + ")."; return false; }
+            ready = true;
+            return true;
+        }
+
+        public static bool Available() {
+            try { return Init(); } catch (Exception e) { lastError = e.Message; return false; }
+        }
+
+        static Setting NewSetting() {
+            Setting st = new Setting();
+            st.version = (uint)(Marshal.SizeOf(typeof(Setting)) | (1 << 16));
+            st.settingName = "";
+            st.predefinedValue = new byte[4100];
+            st.currentValue = new byte[4100];
+            return st;
+        }
+
+        // mode 0 = set values, 1 = reset to driver default, 2 = read
+        static string Run(string exe, uint[] ids, uint[] values, int mode, int[] outValues) {
+            bool ok;
+            try { ok = Init(); } catch (Exception e) { lastError = e.Message; ok = false; }
+            if (!ok) return lastError;
+            IntPtr session = IntPtr.Zero;
+            int r = Fn<FCreate>(0x0694D52E, 0)(ref session);
+            if (r != 0) return "Couldn't open NVIDIA settings (code " + r + ").";
+            try {
+                r = Fn<FSession>(0x375DBD6B, 0)(session);
+                if (r != 0) return "Couldn't load NVIDIA settings (code " + r + ").";
+                IntPtr profile = IntPtr.Zero;
+                App app = new App();
+                app.version = (uint)(Marshal.SizeOf(typeof(App)) | (4 << 16));
+                r = Fn<FFindApp>(0xEEE566B2, 0)(session, new StringBuilder(exe), ref profile, ref app);
+                if (r != 0) return "Your NVIDIA driver has no Fortnite profile (code " + r + "). Update your NVIDIA driver and try again.";
+                for (int i = 0; i < ids.Length; i++) {
+                    if (mode == 0) {
+                        Setting st = NewSetting();
+                        st.settingId = ids[i];
+                        st.settingType = 0;
+                        BitConverter.GetBytes(values[i]).CopyTo(st.currentValue, 0);
+                        r = Fn<FSet>(0x8A2CF5F5, 0x577DD202)(session, profile, ref st, 0, 0);
+                        if (r != 0) return "The driver refused setting 0x" + ids[i].ToString("X8") + " (code " + r + ").";
+                    } else if (mode == 1) {
+                        Fn<FDel>(0xD20D29DF, 0xE4A26362)(session, profile, ids[i]);
+                    } else {
+                        Setting st = NewSetting();
+                        uint x = 0;
+                        r = Fn<FGet>(0xEA99498D, 0x73BF8338)(session, profile, ids[i], ref st, ref x);
+                        outValues[i] = (r == 0) ? BitConverter.ToInt32(st.currentValue, 0) : int.MinValue;
+                    }
+                }
+                if (mode != 2) {
+                    r = Fn<FSession>(0xFCBC7E14, 0)(session);
+                    if (r != 0) return "Couldn't save NVIDIA settings (code " + r + ").";
+                }
+                return "";
+            } catch (Exception e) {
+                return e.Message;
+            } finally {
+                try { Fn<FSession>(0xDAD9CFF8, 0)(session); } catch { }
+            }
+        }
+
+        public static string Apply(string exe, uint[] ids, uint[] values) { return Run(exe, ids, values, 0, null); }
+        public static string Reset(string exe, uint[] ids) { return Run(exe, ids, null, 1, null); }
+        public static int[] Read(string exe, uint[] ids) {
+            int[] o = new int[ids.Length];
+            return Run(exe, ids, null, 2, o) == "" ? o : null;
+        }
+    }
+}
+'@
+$script:NvLoaded = $false
+try { Add-Type -TypeDefinition $NV_SOURCE -ErrorAction Stop; $script:NvLoaded = $true } catch { }
+
+# Fortnite's NVIDIA potato profile: setting ID, name, value, what it means
+$NV_POTATO = @(
+    @{ Id = 0x00738E8F; Name = 'Texture LOD bias (DirectX)'; Value = 0x18; Text = '+3, blurry potato textures' }
+    @{ Id = 0x20403F79; Name = 'Texture LOD bias (OpenGL)'; Value = 0x30; Text = '+3' }
+    @{ Id = 0x0019BB68; Name = 'Negative LOD bias'; Value = 0x01; Text = 'Clamp' }
+    @{ Id = 0x10D48A85; Name = 'Transparency supersampling'; Value = 0x34; Text = '8x, needed for the LOD bias to apply' }
+    @{ Id = 0x00CE2691; Name = 'Texture filtering quality'; Value = 0x14; Text = 'High performance' }
+    @{ Id = 0x1057EB71; Name = 'Power management mode'; Value = 0x01; Text = 'Prefer maximum performance' }
+)
+
 # ---------- Registry helpers ----------
 function Get-Reg($Path, $Name) {
     try { (Get-ItemProperty -Path $Path -Name $Name -ErrorAction Stop).$Name } catch { $null }
@@ -1739,6 +1893,16 @@ function Get-PresetSummary($st) {
     $r3 = if ($st.Res3D) { "3D resolution $($st.Res3D)%" } else { '' }
     (@($mode, $cap, $r3) | Where-Object { $_ }) -join ', '
 }
+function Set-NvPotato([bool]$on) {
+    if (-not $script:NvLoaded) { Set-Status "The NVIDIA driver code couldn't load on this PC." 'err'; return }
+    $ids = [uint32[]]@($NV_POTATO | ForEach-Object { [uint32]$_.Id })
+    $err = if ($on) { [Vz.Nv]::Apply($FN_EXE_NAME, $ids, [uint32[]]@($NV_POTATO | ForEach-Object { [uint32]$_.Value })) } else { [Vz.Nv]::Reset($FN_EXE_NAME, $ids) }
+    if ($err) { Set-Status "NVIDIA: $err" 'err' }
+    elseif ($on) { Set-Status 'Potato textures set in your NVIDIA driver. Restart Fortnite to see them.' 'ok' }
+    else { Set-Status "NVIDIA settings for Fortnite are back to the driver's defaults." 'ok' }
+    Show-Page 'fortnite'
+}
+
 function Open-NvidiaPanel {
     $paths = @("$env:ProgramFiles\NVIDIA Corporation\Control Panel Client\nvcplui.exe", "${env:ProgramFiles(x86)}\NVIDIA Corporation\Control Panel Client\nvcplui.exe")
     foreach ($pth in $paths) { if (Test-Path -LiteralPath $pth) { Start-Process -FilePath $pth; return } }
@@ -1834,24 +1998,31 @@ function Build-fortnite {
     }
     [void]$body.Children.Add($mine)
 
-    # NVIDIA driver settings (shown when an NVIDIA card is found)
+    # NVIDIA potato textures (shown when an NVIDIA card is found)
     if ("$($script:Specs.Gpu)" -match 'NVIDIA') {
-        $nv = New-Panel 'NVIDIA potato settings'
-        Add-PanelItem $nv (New-Row 'Set these in NVIDIA Control Panel' 'Open it, go to Manage 3D settings, then Program Settings, pick Fortnite (add FortniteClient-Win64-Shipping.exe if it is not listed) and set the values below. They lower image quality inside the driver for more FPS.' (New-Button 'Open NVIDIA Control Panel' -Primary { Open-NvidiaPanel }))
-        foreach ($nvRow in @(
-            @('Power management mode', 'Prefer maximum performance', 'Keeps the graphics card at full clock speed while you play.'),
-            @('Texture filtering - Quality', 'High performance', 'The biggest potato setting in the driver. Slightly blurrier textures, more FPS.'),
-            @('Texture filtering - Anisotropic sample optimization', 'On', 'Cheaper texture sampling.'),
-            @('Texture filtering - Trilinear optimization', 'On', 'Cheaper texture blending.'),
-            @('Low latency mode', 'Off (Reflex in Fortnite does this better)', 'Fortnite has Reflex built in, so leave this off and use Reflex On + Boost instead.'),
-            @('Vertical sync', 'Off', 'Adds input delay.'),
-            @('Shader cache size', 'Unlimited', 'Fewer stutters from shaders being rebuilt.'),
-            @('Threaded optimization', 'On', 'Lets the driver use more CPU cores.'),
-            @('Max frame rate', 'Off', 'Cap FPS in Fortnite instead.')
-        )) {
-            $val = New-Text $nvRow[1] 13 $C.AccentSoft 'SemiBold'
-            Add-PanelItem $nv (New-Row $nvRow[0] $nvRow[2] $val)
+        $nv = New-Panel 'NVIDIA potato textures'
+        $ids = [uint32[]]@($NV_POTATO | ForEach-Object { [uint32]$_.Id })
+        $cur = $null
+        if ($script:NvLoaded) { try { $cur = [Vz.Nv]::Read($FN_EXE_NAME, $ids) } catch { } }
+        $on = $false
+        if ($cur) { $on = -not (@(for ($i = 0; $i -lt $ids.Count; $i++) { if ($cur[$i] -ne [int]$NV_POTATO[$i].Value) { 1 } }).Count) }
+        $btns = New-Object Windows.Controls.StackPanel
+        $btns.Orientation = 'Horizontal'
+        [void]$btns.Children.Add((New-Button $(if ($on) { 'Re-apply' } else { 'Apply potato textures' }) -Primary { Set-NvPotato $true }))
+        $undo = New-Button 'Undo' { Set-NvPotato $false }
+        $undo.Margin = T 8 0 0 0
+        [void]$btns.Children.Add($undo)
+        $desc = 'Sets Fortnite''s profile in your NVIDIA driver so textures load at their lowest detail and the card runs at full speed. Things look flat and blurry, but there is less to draw and enemies stand out. The same trick as NVIDIA Profile Inspector, done for you. Restart Fortnite afterwards.'
+        if (-not $script:NvLoaded -or -not $cur) { $desc += ' (Could not read your NVIDIA settings: ' + $(if ($script:NvLoaded) { [Vz.Nv]::LastError } else { 'driver code did not load' }) + ')' }
+        elseif ($on) { $desc = 'On. ' + $desc }
+        Add-PanelItem $nv (New-Row 'Potato textures' $desc $btns)
+        for ($i = 0; $i -lt $NV_POTATO.Count; $i++) {
+            $item = $NV_POTATO[$i]
+            $match = $cur -and $cur[$i] -eq [int]$item.Value
+            $val = New-Text $item.Text 12.5 $(if ($match) { $C.Good } else { $C.AccentSoft }) 'SemiBold'
+            Add-PanelItem $nv (New-Row $item.Name $(if ($match) { 'Set' } else { 'Not set yet' }) $val)
         }
+        Add-PanelItem $nv (New-Row 'Other NVIDIA settings' 'Shader cache size: Unlimited. Threaded optimization: On. Vertical sync: Off. Low latency mode: Off (use Reflex in Fortnite instead).' (New-Button 'Open NVIDIA Control Panel' { Open-NvidiaPanel }))
         [void]$body.Children.Add($nv)
     }
 

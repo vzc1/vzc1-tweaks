@@ -25,7 +25,7 @@ If Windows shows "Windows protected your PC", click **More info**, then **Run an
 - Mouse acceleration off, Sticky Keys shortcut off
 - Low-end PC: Windows visual effects set to best performance, transparency off, background Store apps off
 
-**Fortnite settings** edits Fortnite's own settings file: Performance mode, DirectX 11 or 12, frame rate limit, window mode, NVIDIA Reflex, V-Sync, motion blur, shadows, grass, Nanite, ray tracing and the FPS counter. It has a **Pro preset**, a **Potato preset** for weak PCs (3D resolution 50%, everything lowest), **your own saved presets**, 3D resolution and game resolution controls, and for NVIDIA cards the exact NVIDIA Control Panel settings to use. The Pro preset is with what most top-earning pros run (Performance mode, low settings, Reflex On + Boost, FPS capped at your monitor). Your original file is backed up the first time, with a one-click restore.
+**Fortnite settings** edits Fortnite's own settings file: Performance mode, DirectX 11 or 12, frame rate limit, window mode, NVIDIA Reflex, V-Sync, motion blur, shadows, grass, Nanite, ray tracing and the FPS counter. It has a **Pro preset**, a **Potato preset** for weak PCs (3D resolution 50%, everything lowest), **your own saved presets**, 3D resolution and game resolution controls, and for NVIDIA cards one-click **potato textures** in the NVIDIA driver (texture LOD bias +3, the NVIDIA Profile Inspector trick) with an Undo button. The Pro preset is with what most top-earning pros run (Performance mode, low settings, Reflex On + Boost, FPS capped at your monitor). Your original file is backed up the first time, with a one-click restore.
 
 **Server ping** shows live ping, jitter and packet loss to every Fortnite datacenter: Virginia, Ohio, Dallas, Oregon, San Jose, Frankfurt, London, Paris, Sao Paulo, Sydney, Tokyo and Bahrain. It uses Epic's own matchmaking ping servers and tells you which Matchmaking Region to pick.
 
@@ -38,6 +38,9 @@ If Windows shows "Windows protected your PC", click **More info**, then **Run an
 ## Honest notes
 - No app can lower your base ping. That depends on how far you are from the server. What you can fix is lag spikes, and an Ethernet cable fixes most of them.
 - The biggest FPS gain on low and mid-range PCs is Fortnite's Performance rendering mode. The Fortnite settings page sets it for you.
+
+## Credits
+NVIDIA driver function and setting IDs come from [NVIDIA Profile Inspector](https://github.com/Orbmu2k/nvidiaProfileInspector) by Orbmu2k (MIT license).
 
 ## How the exe is built
 GitHub Actions compiles a small C# launcher (`build/Launcher.cs`) that runs `vzc1-optimizations.ps1` inside the exe. Nothing is dropped to disk or downloaded. A new release is published on every push to `main`.
