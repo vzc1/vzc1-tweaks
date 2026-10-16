@@ -359,8 +359,15 @@ $NV_METHODS = @(
         @{ Id = 0x1057EB71; Name = 'Power management mode'; Value = 0x01; Text = 'Prefer maximum performance' }
        ) }
 )
+# Lowest-delay driver settings for Fortnite's profile (NVIDIA Control Panel: Low Latency Mode = Ultra)
+$NV_LATENCY = @(
+    @{ Id = 0x10835000; Value = 0x01 }   # Ultra Low Latency enabled
+    @{ Id = 0x0005F543; Value = 0x02 }   # control panel shows "Ultra"
+    @{ Id = 0x007BA09E; Value = 0x01 }   # max pre-rendered frames 1
+    @{ Id = 0x1057EB71; Value = 0x01 }   # power: prefer maximum performance
+)
 # Every setting any method touches, so Undo can put all of them back
-$NV_ALL_IDS = [uint32[]]@($NV_METHODS | ForEach-Object { $_.Settings } | ForEach-Object { [uint32]([int64]$_.Id -band [int64]4294967295) } | Sort-Object -Unique)
+$NV_ALL_IDS = [uint32[]]@(@($NV_METHODS | ForEach-Object { $_.Settings }) + $NV_LATENCY | ForEach-Object { [uint32]([int64]$_.Id -band [int64]4294967295) } | Sort-Object -Unique)
 function ConvertTo-U32($v) { [uint32]([int64]$v -band [int64]4294967295) }
 
 # ---------- Registry helpers ----------
@@ -879,11 +886,11 @@ function Set-RetracPreset([switch]$Quiet) {
         Set-IniValue $lines $FN_SEC 'bMotionBlur' 'False'
         Set-IniValue $lines $FN_SEC 'bShowFPS' 'True'
         foreach ($k in 'FullscreenMode', 'LastConfirmedFullscreenMode', 'PreferredFullscreenMode') { Set-IniValue $lines $FN_SEC $k '0' }
-        $hz = $script:MonitorHz; if (-not $hz) { try { $hz = ([Vz.Native]::RefreshInfo())[3] } catch { $hz = 240 } }
-        Set-IniValue $lines $FN_SEC 'FrameRateLimit' ('{0}.000000' -f [int]$hz)
+        Set-IniValue $lines $FN_SEC 'FrameRateLimit' '0.000000'
+        Set-IniValue $lines $FN_SEC 'LatencyTweak2' '2'
         Save-IniLines $lines
         Write-Log 'Retrac OG preset written'
-        if (-not $Quiet) { Set-Status "OG preset saved for Retrac: DirectX 11, everything low, fullscreen, no V-Sync or motion blur, FPS capped at $hz." 'ok' }
+        if (-not $Quiet) { Set-Status "OG preset saved for Retrac: DirectX 11, everything low, fullscreen, no V-Sync or motion blur, FPS uncapped, Reflex On + Boost if this build has it." 'ok' }
     } catch { Set-Status "Couldn't save the Retrac preset: $($_.Exception.Message)" 'err' }
 }
 
@@ -892,17 +899,27 @@ function Set-LowestDelay {
     $msgs = @()
     if ($script:NvLoaded -and "$($script:Specs.Gpu)" -match 'NVIDIA') {
         $err = [Vz.Nv]::Reset($FN_EXE_NAME, $NV_ALL_IDS)
-        if ($err) { $msgs += "NVIDIA: $err" } else { Set-NvLastMethod $null; $msgs += 'NVIDIA potato settings undone' }
+        if (-not $err) {
+            Set-NvLastMethod $null
+            $err = [Vz.Nv]::Apply($FN_EXE_NAME, [uint32[]]@($NV_LATENCY | ForEach-Object { ConvertTo-U32 $_.Id }), [uint32[]]@($NV_LATENCY | ForEach-Object { ConvertTo-U32 $_.Value }))
+        }
+        if ($err) { $msgs += "NVIDIA: $err" } else { $msgs += 'NVIDIA potato settings off, Ultra Low Latency on' }
     }
-    if (-not $script:Fn) { Show-Page 'fortnite' }
-    if ($script:Fn) {
-        Set-FortnitePro
-        $script:Fn.Nanite.IsChecked = $true
-        Save-FortniteSettings
-        $msgs += 'Fortnite on Performance mode with Reflex On + Boost, everything low'
+    if ((Get-SettingsProfile) -eq 'retrac') {
+        Set-RetracPreset -Quiet
+        $msgs += 'Retrac on the OG preset with FPS uncapped'
+    } else {
+        if (-not $script:Fn) { Show-Page 'fortnite' }
+        if ($script:Fn) {
+            Set-FortnitePro
+            $script:Fn.Nanite.IsChecked = $true
+            Set-SegValue $script:Fn.Cap 0
+            Save-FortniteSettings
+            $msgs += 'Fortnite on Performance mode, Reflex On + Boost, fullscreen, FPS uncapped'
+        }
     }
     Write-Log ("Lowest delay: " + ($msgs -join '; '))
-    Set-Status (($msgs -join '. ') + '. Start Fortnite to play with the lowest delay.') 'ok'
+    Set-Status (($msgs -join '. ') + '. Start the game to play with the lowest delay.') 'ok'
     Show-Page 'fortnite'
 }
 
@@ -1240,8 +1257,7 @@ if ($cliArgs -match '--undo-all') {
     }
     if ($script:NvLoaded) {
         try {
-            $ids = [uint32[]]@($NV_METHODS | ForEach-Object { $_.Settings } | ForEach-Object { [uint32]([int64]$_.Id -band [int64]4294967295) } | Sort-Object -Unique)
-            $e = [Vz.Nv]::Reset($FN_EXE_NAME, $ids); $undoLog += "nvidia reset: $(if ($e) { $e } else { 'done' })"
+            $e = [Vz.Nv]::Reset($FN_EXE_NAME, $NV_ALL_IDS); $undoLog += "nvidia reset: $(if ($e) { $e } else { 'done' })"
         } catch { $undoLog += "nvidia: $($_.Exception.Message)" }
     }
     try {
@@ -2689,7 +2705,7 @@ function Build-fortnite {
         $b2.Margin = T 8 0 0 0
         [void]$sw.Children.Add($b1); [void]$sw.Children.Add($b2)
         Add-PanelItem $rp (New-Row "Now on: $(if ($onRetrac) { 'Retrac settings' } else { 'new Fortnite settings' })" 'Switching saves the settings you are leaving and loads the other set. The first switch to Retrac also applies the OG preset.' $sw)
-        Add-PanelItem $rp (New-Row 'OG preset' 'Settings a 2020 build understands: DirectX 11, everything low, fullscreen, no V-Sync or motion blur, FPS capped at your monitor. Use it while on Retrac settings.' (New-Button 'Apply OG preset' -Primary:$onRetrac { Set-RetracPreset }))
+        Add-PanelItem $rp (New-Row 'OG preset' 'Settings a 2020 build understands: DirectX 11, everything low, fullscreen, no V-Sync or motion blur, FPS uncapped for the lowest delay, and Reflex On + Boost if this build has it. Use it while on Retrac settings.' (New-Button 'Apply OG preset' -Primary:$onRetrac { Set-RetracPreset }))
         Add-PanelItem $rp (New-Row 'NVIDIA potato textures' 'The NVIDIA methods below also work in Retrac, since the game file has the same name. Use one without DirectX 12 or Nanite (Martoz or Classic +3), because this build may not support them.' $null)
     } else {
         Add-PanelItem $rp (New-Row 'No Retrac build found' 'If you play Retrac, point the app at the folder your Fortnite build is in.' (New-Button 'Choose folder' { Select-RetracFolder }))
@@ -2697,7 +2713,7 @@ function Build-fortnite {
     [void]$body.Children.Add($rp)
 
     $ld = New-Panel 'Lowest delay'
-    Add-PanelItem $ld (New-Row 'Lowest delay' 'One click back to the setup with the least input delay: undoes any NVIDIA potato settings and puts Fortnite on Performance mode with Reflex On + Boost and everything low. Use it when you want the fastest feel over the potato look.' (New-Button 'Use lowest delay' -Primary { Set-LowestDelay }))
+    Add-PanelItem $ld (New-Row 'Lowest delay' 'The setup with the least input delay: turns off the NVIDIA potato settings (supersampling adds delay), turns on NVIDIA Ultra Low Latency for Fortnite, and sets Performance mode, Reflex On + Boost, fullscreen and FPS uncapped. On Retrac settings it uses the OG preset instead. Undo on the NVIDIA card turns the driver part off.' (New-Button 'Use lowest delay' -Primary { Set-LowestDelay }))
     [void]$body.Children.Add($ld)
 
     # Pro player presets (from prosettings.net)
