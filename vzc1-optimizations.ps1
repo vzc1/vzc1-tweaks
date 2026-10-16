@@ -808,6 +808,85 @@ function Clear-ShaderCache {
     Set-Status ("Shader cache cleared ({0}). The first match will build it again, so expect a few small stutters, then it should run smoother than before." -f (Format-Bytes $bytes)) 'ok'
 }
 
+# ---------- Retrac (old Fortnite builds) ----------
+$RETRAC_PATH_FILE = Join-Path $DATA_DIR 'retrac-path.txt'
+$FN_INI_DIR = Split-Path $FN_INI
+$INI_FORTNITE = Join-Path $FN_INI_DIR 'GameUserSettings.vzc1-fortnite.ini'
+$INI_RETRAC = Join-Path $FN_INI_DIR 'GameUserSettings.vzc1-retrac.ini'
+$PROFILE_FILE = Join-Path $DATA_DIR 'settings-profile.txt'
+
+function Find-RetracBuild {
+    $roots = @()
+    try { $saved = (Get-Content -LiteralPath $RETRAC_PATH_FILE -ErrorAction Stop | Select-Object -First 1).Trim(); if ($saved) { $roots += $saved } } catch { }
+    $roots += 'C:\retrac'
+    foreach ($r in $roots) {
+        if (-not (Test-Path -LiteralPath $r)) { continue }
+        $exe = Get-ChildItem -LiteralPath $r -Recurse -Depth 5 -Filter 'FortniteClient-Win64-Shipping.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($exe) {
+            $root = $exe.Directory.Parent.Parent.Parent.FullName
+            $ver = if ((Split-Path $root -Leaf) -match 'Release-([\d\.]+)') { $Matches[1] } else { 'unknown' }
+            return @{ Root = $root; Exe = $exe.FullName; Version = $ver }
+        }
+    }
+    return $null
+}
+function Select-RetracFolder {
+    Add-Type -AssemblyName System.Windows.Forms
+    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dlg.Description = 'Pick the folder your Retrac Fortnite build is in'
+    if ($dlg.ShowDialog() -eq 'OK') {
+        try { if (-not (Test-Path $DATA_DIR)) { New-Item -ItemType Directory -Path $DATA_DIR -Force | Out-Null }; Set-Content -LiteralPath $RETRAC_PATH_FILE -Value $dlg.SelectedPath } catch { }
+        if (Find-RetracBuild) { Set-Status 'Retrac build found.' 'ok' } else { Set-Status "No Fortnite build found in that folder." 'err' }
+        Show-Page 'fortnite'
+    }
+}
+function Get-SettingsProfile { try { (Get-Content -LiteralPath $PROFILE_FILE -ErrorAction Stop | Select-Object -First 1).Trim() } catch { 'fortnite' } }
+function Switch-SettingsProfile($to) {
+    if (Test-FortniteRunning) { Set-Status 'Close Fortnite or Retrac first.' 'err'; return }
+    if (-not (Test-Path -LiteralPath $FN_INI)) { Set-Status "Fortnite's settings file wasn't found. Open the game once first." 'err'; return }
+    $from = Get-SettingsProfile
+    if ($from -eq $to) { Set-Status "Already on $(if ($to -eq 'retrac') { 'Retrac' } else { 'new Fortnite' }) settings." 'ok'; return }
+    try {
+        $f = Get-Item -LiteralPath $FN_INI; if ($f.IsReadOnly) { $f.IsReadOnly = $false }
+        # Save the current file as the profile we're leaving
+        Copy-Item -LiteralPath $FN_INI -Destination $(if ($from -eq 'retrac') { $INI_RETRAC } else { $INI_FORTNITE }) -Force
+        $src = if ($to -eq 'retrac') { $INI_RETRAC } else { $INI_FORTNITE }
+        if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $FN_INI -Force }
+        if (-not (Test-Path $DATA_DIR)) { New-Item -ItemType Directory -Path $DATA_DIR -Force | Out-Null }
+        Set-Content -LiteralPath $PROFILE_FILE -Value $to
+        $first = -not (Test-Path -LiteralPath $src)
+        Write-Log "Settings profile: $from -> $to$(if ($first) { ' (first time, kept current file)' })"
+        if ($to -eq 'retrac') {
+            if ($first) { Set-RetracPreset -Quiet }
+            Set-Status "Switched to Retrac settings. Your new Fortnite settings are saved and come back when you switch again." 'ok'
+        } else {
+            Set-Status "Switched back to new Fortnite settings. Your Retrac settings are saved." 'ok'
+        }
+    } catch { Set-Status "Couldn't switch settings: $($_.Exception.Message)" 'err' }
+    Show-Page 'fortnite'
+}
+function Set-RetracPreset([switch]$Quiet) {
+    if (Test-FortniteRunning) { Set-Status 'Close Fortnite or Retrac first.' 'err'; return }
+    try {
+        $lines = Get-IniLines
+        if (-not $lines) { Set-Status "Fortnite's settings file wasn't found." 'err'; return }
+        # Only settings a 2020 build understands: DirectX 11, everything low, no Performance mode
+        Set-IniValue $lines 'D3DRHIPreference' 'PreferredRHI' 'dx11'
+        Set-IniValue $lines 'D3DRHIPreference' 'PreferredFeatureLevel' 'sm5'
+        foreach ($k in 'sg.ViewDistanceQuality', 'sg.AntiAliasingQuality', 'sg.ShadowQuality', 'sg.PostProcessQuality', 'sg.TextureQuality', 'sg.EffectsQuality', 'sg.FoliageQuality') { Set-IniValue $lines 'ScalabilityGroups' $k '0' }
+        Set-IniValue $lines 'ScalabilityGroups' 'sg.ResolutionQuality' '100.000000'
+        Set-IniValue $lines $FN_SEC 'bUseVSync' 'False'
+        Set-IniValue $lines $FN_SEC 'bMotionBlur' 'False'
+        Set-IniValue $lines $FN_SEC 'bShowFPS' 'True'
+        foreach ($k in 'FullscreenMode', 'LastConfirmedFullscreenMode', 'PreferredFullscreenMode') { Set-IniValue $lines $FN_SEC $k '0' }
+        $hz = $script:MonitorHz; if (-not $hz) { try { $hz = ([Vz.Native]::RefreshInfo())[3] } catch { $hz = 240 } }
+        Set-IniValue $lines $FN_SEC 'FrameRateLimit' ('{0}.000000' -f [int]$hz)
+        Save-IniLines $lines
+        Write-Log 'Retrac OG preset written'
+        if (-not $Quiet) { Set-Status "OG preset saved for Retrac: DirectX 11, everything low, fullscreen, no V-Sync or motion blur, FPS capped at $hz." 'ok' }
+    } catch { Set-Status "Couldn't save the Retrac preset: $($_.Exception.Message)" 'err' }
+}
+
 function Set-LowestDelay {
     if (Test-FortniteRunning) { Set-Status 'Close Fortnite first.' 'err'; return }
     $msgs = @()
@@ -2596,6 +2675,26 @@ function Build-fortnite {
     Add-PanelItem $pro (New-Row 'Pro preset' 'What most top-earning Fortnite pros run: Performance mode, fullscreen, Reflex On + Boost, FPS capped at your monitor, 3D resolution 100%, and view distance, meshes, textures, effects and post-processing on low with shadows and anti-aliasing off. Pick it, then press Apply to Fortnite.' (New-Button 'Use pro preset' -Primary { Set-FortnitePro }))
     [void]$body.Children.Add($pro)
 
+
+    # Retrac card
+    $rb = Find-RetracBuild
+    $prof = Get-SettingsProfile
+    $rp = New-Panel 'Retrac'
+    if ($rb) {
+        $onRetrac = $prof -eq 'retrac'
+        Add-PanelItem $rp (New-Row "Fortnite $($rb.Version) found" "In $($rb.Root). Old builds share one settings file with new Fortnite, so presets made for new Fortnite (like Performance mode) can break Retrac's graphics. Keep separate settings for each and switch before you play." $null)
+        $sw = New-Object Windows.Controls.StackPanel; $sw.Orientation = 'Horizontal'
+        $b1 = New-Button 'Use Retrac settings' -Primary:(-not $onRetrac) { Switch-SettingsProfile 'retrac' }
+        $b2 = New-Button 'Use new Fortnite settings' -Primary:$onRetrac { Switch-SettingsProfile 'fortnite' }
+        $b2.Margin = T 8 0 0 0
+        [void]$sw.Children.Add($b1); [void]$sw.Children.Add($b2)
+        Add-PanelItem $rp (New-Row "Now on: $(if ($onRetrac) { 'Retrac settings' } else { 'new Fortnite settings' })" 'Switching saves the settings you are leaving and loads the other set. The first switch to Retrac also applies the OG preset.' $sw)
+        Add-PanelItem $rp (New-Row 'OG preset' 'Settings a 2020 build understands: DirectX 11, everything low, fullscreen, no V-Sync or motion blur, FPS capped at your monitor. Use it while on Retrac settings.' (New-Button 'Apply OG preset' -Primary:$onRetrac { Set-RetracPreset }))
+        Add-PanelItem $rp (New-Row 'NVIDIA potato textures' 'The NVIDIA methods below also work in Retrac, since the game file has the same name. Use one without DirectX 12 or Nanite (Martoz or Classic +3), because this build may not support them.' $null)
+    } else {
+        Add-PanelItem $rp (New-Row 'No Retrac build found' 'If you play Retrac, point the app at the folder your Fortnite build is in.' (New-Button 'Choose folder' { Select-RetracFolder }))
+    }
+    [void]$body.Children.Add($rp)
 
     $ld = New-Panel 'Lowest delay'
     Add-PanelItem $ld (New-Row 'Lowest delay' 'One click back to the setup with the least input delay: undoes any NVIDIA potato settings and puts Fortnite on Performance mode with Reflex On + Boost and everything low. Use it when you want the fastest feel over the potato look.' (New-Button 'Use lowest delay' -Primary { Set-LowestDelay }))

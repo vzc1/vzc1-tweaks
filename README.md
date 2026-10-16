@@ -29,6 +29,8 @@ If Windows shows "Windows protected your PC", click **More info**, then **Run an
 
 **Fortnite settings** edits Fortnite's own settings file: Performance mode, DirectX 11 or 12, frame rate limit, window mode, NVIDIA Reflex, V-Sync, motion blur, shadows, grass, Nanite, ray tracing and the FPS counter. It has a **Pro preset**, **your own saved presets**, 3D resolution and game resolution controls, and for NVIDIA cards one-click **potato textures** in the NVIDIA driver with six methods: **Martoz's** original (0x45, 8x sparse grid, Performance mode + Reflex for low delay), **BwFN Graphics** and **BwFN Playable Potato**, **Kxng's** (LOD bias 0x45, DirectX 12 + Nanite, everything else lowest), **BenFN's** (LOD bias 0x45, 8x sparse grid, DirectX 12 + Nanite, originally shown by Martoz) and the classic **+3** method from leStripeZ, with an Undo button. The Pro preset is with what most top-earning pros run (Performance mode, low settings, Reflex On + Boost, FPS capped at your monitor). Your original file is backed up the first time, with a one-click restore.
 
+**Retrac**: finds an old Fortnite build (like 14.60), keeps separate settings files for Retrac and new Fortnite with one-click switching, and has an OG preset with only settings old builds understand.
+
 **Pro player presets**: Martoz, Clix, Peterbot, Mongraal and Bugha's video settings from prosettings.net, one click each.
 
 **Server ping** shows live ping, jitter and packet loss to every Fortnite datacenter: Virginia, Ohio, Dallas, Oregon, San Jose, Frankfurt, London, Paris, Sao Paulo, Sydney, Tokyo and Bahrain. It uses Epic's own matchmaking ping servers and tells you which Matchmaking Region to pick.
